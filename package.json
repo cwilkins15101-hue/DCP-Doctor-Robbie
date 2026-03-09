@@ -1,5 +1,5 @@
 {
-  "name": "physickertemp",
+  "name": "physicker",
   "version": "1.0.0",
   "main": "index.js",
   "scripts": {
@@ -9,10 +9,15 @@
     "web": "expo start --web"
   },
   "dependencies": {
-    "expo": "~55.0.5",
-    "expo-status-bar": "~55.0.4",
-    "react": "19.2.0",
-    "react-native": "0.83.2"
+    "@expo/vector-icons": "^15.0.3",
+    "expo": "~54.0.0",
+    "expo-av": "^16.0.8",
+    "expo-document-picker": "~14.0.8",
+    "expo-status-bar": "~3.0.9",
+    "react": "19.1.0",
+    "react-dom": "19.1.0",
+    "react-native": "0.81.5",
+    "react-native-web": "^0.21.0"
   },
   "private": true
 }
