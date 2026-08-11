@@ -1,0 +1,98 @@
+:root {
+  --blue: #0B3D91;
+  --blue-mid: #1A56DB;
+  --blue-light: #E8F0FE;
+  --blue-border: #BFDBFE;
+  --gold: #F5A623;
+  --gold-light: #FEF3C7;
+  --white: #FFFFFF;
+  --bg: #F4F7FF;
+  --text-dark: #0B1F3A;
+  --text-mid: #4A6080;
+  --text-light: #94A3B8;
+  --danger: #DC2626;
+  --border: #DDE6F0;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text-dark);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+
+#root {
+  max-width: 720px;
+  margin: 0 auto;
+  min-height: 100vh;
+  padding: 24px;
+}
+
+.card {
+  background: var(--white);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 20px;
+  margin-bottom: 16px;
+}
+
+h1, h2 { color: var(--blue); }
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 18px;
+  border-radius: 8px;
+  border: none;
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.btn-primary { background: var(--blue-mid); color: var(--white); }
+.btn-primary:disabled { background: var(--text-light); cursor: not-allowed; }
+.btn-danger { background: var(--danger); color: var(--white); }
+.btn-secondary { background: var(--blue-light); color: var(--blue); }
+
+.status-pill {
+  display: inline-block;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 600;
+  background: var(--gold-light);
+  color: var(--gold);
+}
+.status-pill.ok { background: var(--blue-light); color: var(--blue); }
+.status-pill.error { background: #FEE2E2; color: var(--danger); }
+
+.note-header { font-size: 16px; font-weight: 700; color: var(--blue); margin-top: 16px; margin-bottom: 4px; }
+.note-body { font-size: 15px; color: var(--text-dark); line-height: 1.6; }
+.note-body b { font-weight: 700; }
+
+textarea, select, input {
+  width: 100%;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 14px;
+  font-family: inherit;
+}
+
+.volume-meter {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--blue-light);
+  overflow: hidden;
+  margin: 12px 0;
+}
+.volume-meter-fill {
+  height: 100%;
+  background: var(--gold);
+  transition: width 100ms linear;
+}
+
+.hint { color: var(--text-mid); font-size: 13px; }
