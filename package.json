@@ -4,14 +4,15 @@
   "main": "index.js",
   "scripts": {
     "start": "expo start",
-    "android": "expo start --android",
-    "ios": "expo start --ios",
+    "android": "expo run:android",
+    "ios": "expo run:ios",
     "web": "expo start --web"
   },
   "dependencies": {
     "@expo/vector-icons": "^15.0.3",
     "expo": "~54.0.0",
     "expo-av": "^16.0.8",
+    "expo-dev-client": "^57.0.18",
     "expo-document-picker": "~14.0.8",
     "expo-status-bar": "~3.0.9",
     "react": "19.1.0",
