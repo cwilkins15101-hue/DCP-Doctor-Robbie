@@ -13,6 +13,13 @@ const OPENAI_API_KEY = process.env.EXPO_PUBLIC_OPENAI_API_KEY;
 const ANTHROPIC_API_KEY = process.env.EXPO_PUBLIC_ANTHROPIC_API_KEY;
 
 // ---------------------------------------------------------------------------
+// AI pipeline selection — which service labels speakers and writes the
+// clinical summary. Transcription always uses Whisper either way.
+// ---------------------------------------------------------------------------
+const PIPELINES = { CLAUDE: 'claude', DRAGON: 'dragon' };
+const PIPELINE_LABELS = { [PIPELINES.CLAUDE]: 'Claude', [PIPELINES.DRAGON]: 'Dragon Copilot' };
+
+// ---------------------------------------------------------------------------
 // Color tokens — Blue & Gold
 // ---------------------------------------------------------------------------
 const C = {
@@ -128,7 +135,7 @@ async function transcribeWithWhisper(uri, filename) {
 // ---------------------------------------------------------------------------
 // Claude — speaker identification
 // ---------------------------------------------------------------------------
-async function identifySpeakers(transcript) {
+async function identifySpeakersClaude(transcript) {
   const response = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     headers: {
@@ -166,7 +173,7 @@ ${transcript}`,
 // ---------------------------------------------------------------------------
 // Claude clinical summary
 // ---------------------------------------------------------------------------
-async function generateClinicalSummary(transcript, patient) {
+async function generateClinicalSummaryClaude(transcript, patient) {
   const patientContext = patient
     ? `Patient: ${patient['Patient Name'] ?? 'Unknown'}
 MRN: ${patient['MRN'] ?? 'N/A'}
@@ -215,6 +222,44 @@ Generate a SOAP note using markdown formatting:
 }
 
 // ---------------------------------------------------------------------------
+// Dragon Copilot — placeholder pipeline. No real Dragon Copilot API is wired
+// up yet; these mocks let the pipeline toggle be exercised end-to-end and
+// are meant to be swapped for real API calls once credentials are available.
+// ---------------------------------------------------------------------------
+function wait(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+async function identifySpeakersDragonPlaceholder(transcript) {
+  console.log('Dragon Copilot placeholder: labeling speakers (mock, no API call made)');
+  await wait(800);
+  const sentences = transcript.split(/(?<=[.?!])\s+/).filter(Boolean);
+  return sentences
+    .map((sentence, i) => `${i % 2 === 0 ? 'Doctor' : 'Patient'}: ${sentence}`)
+    .join('\n');
+}
+
+async function generateClinicalSummaryDragonPlaceholder(transcript, patient) {
+  console.log('Dragon Copilot placeholder: generating summary (mock, no API call made)');
+  await wait(1200);
+  const patientName = patient ? patient['Patient Name'] ?? 'Unknown' : 'Unknown';
+  return `## Subjective
+**[Placeholder]** Dragon Copilot is not connected yet — this is mock output standing in for a real API response.
+
+## Objective
+No live data. Connect the Dragon Copilot API to replace this placeholder.
+
+## Assessment
+Pending real integration.
+
+## Plan
+Add Dragon Copilot credentials and swap the placeholder functions for live API calls.
+
+---
+Patient: **${patientName}** · Transcript length: ${transcript.length} characters`;
+}
+
+// ---------------------------------------------------------------------------
 // MarkdownText — renders **bold** and ## Section Headers
 // ---------------------------------------------------------------------------
 function MarkdownText({ text, baseStyle }) {
@@ -257,6 +302,9 @@ const mdStyles = StyleSheet.create({
 export default function App() {
   // Screen: 'record' | 'transcript' | 'summary'
   const [screen, setScreen] = useState('record');
+
+  // AI pipeline: 'claude' | 'dragon'
+  const [pipeline, setPipeline] = useState(PIPELINES.CLAUDE);
 
   // Permissions
   const [permissionGranted, setPermissionGranted] = useState(false);
@@ -478,8 +526,10 @@ export default function App() {
       const rawText = await transcribeWithWhisper(audioUri, audioName);
       console.log('Whisper result length:', rawText?.length);
 
-      setTranscribeStep('Identifying speakers…');
-      const labeled = await identifySpeakers(rawText);
+      setTranscribeStep(`Identifying speakers (${PIPELINE_LABELS[pipeline]})…`);
+      const labeled = pipeline === PIPELINES.DRAGON
+        ? await identifySpeakersDragonPlaceholder(rawText)
+        : await identifySpeakersClaude(rawText);
 
       setTranscript(labeled);
       setScreen('transcript');
@@ -494,13 +544,15 @@ export default function App() {
   // ---- Summary ----
 
   async function handleGenerateSummary() {
-    if (!ANTHROPIC_API_KEY) {
+    if (pipeline === PIPELINES.CLAUDE && !ANTHROPIC_API_KEY) {
       Alert.alert('Missing API key', 'Add EXPO_PUBLIC_ANTHROPIC_API_KEY to your .env file.');
       return;
     }
     setSummarizing(true);
     try {
-      const text = await generateClinicalSummary(transcript, selectedPatient);
+      const text = pipeline === PIPELINES.DRAGON
+        ? await generateClinicalSummaryDragonPlaceholder(transcript, selectedPatient)
+        : await generateClinicalSummaryClaude(transcript, selectedPatient);
       setSummary(text);
       setScreen('summary');
     } catch (err) {
@@ -548,7 +600,7 @@ export default function App() {
               <Text style={styles.backButtonText}>‹ Back</Text>
             </TouchableOpacity>
             <Text style={styles.tsTitle}>Transcript</Text>
-            <View style={{ width: 60 }} />
+            <Text style={styles.tsPipelineBadge}>{PIPELINE_LABELS[pipeline]}</Text>
           </View>
 
           {/* Patient strip */}
@@ -628,7 +680,7 @@ export default function App() {
             <Text style={styles.backButtonText}>‹ Transcript</Text>
           </TouchableOpacity>
           <Text style={styles.tsTitle}>Clinical Summary</Text>
-          <View style={{ width: 80 }} />
+          <Text style={styles.tsPipelineBadge}>{PIPELINE_LABELS[pipeline]}</Text>
         </View>
 
         {selectedPatient && (
@@ -688,6 +740,34 @@ export default function App() {
         <TouchableOpacity style={styles.debugLink} onPress={() => setLogModalVisible(true)}>
           <Text style={styles.debugLinkText}>View Log</Text>
         </TouchableOpacity>
+
+        {/* AI pipeline toggle */}
+        <View style={styles.pipelineBlock}>
+          <Text style={styles.pipelineLabel}>AI Pipeline</Text>
+          <View style={styles.pipelineToggle}>
+            <TouchableOpacity
+              style={[styles.pipelineOption, pipeline === PIPELINES.CLAUDE && styles.pipelineOptionActive]}
+              onPress={() => setPipeline(PIPELINES.CLAUDE)}
+            >
+              <Text style={[styles.pipelineOptionText, pipeline === PIPELINES.CLAUDE && styles.pipelineOptionTextActive]}>
+                Claude
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.pipelineOption, pipeline === PIPELINES.DRAGON && styles.pipelineOptionActive]}
+              onPress={() => setPipeline(PIPELINES.DRAGON)}
+            >
+              <Text style={[styles.pipelineOptionText, pipeline === PIPELINES.DRAGON && styles.pipelineOptionTextActive]}>
+                Dragon Copilot
+              </Text>
+            </TouchableOpacity>
+          </View>
+          {pipeline === PIPELINES.DRAGON && (
+            <Text style={styles.pipelineWarning}>
+              Placeholder only — Dragon Copilot API not yet connected.
+            </Text>
+          )}
+        </View>
 
         {/* Patient banner */}
         {selectedPatient ? (
@@ -868,6 +948,24 @@ const styles = StyleSheet.create({
   title: { fontSize: 30, fontWeight: '800', color: C.blue, letterSpacing: 0.5, marginBottom: 2 },
   subtitle: { fontSize: 13, color: C.textMid, marginBottom: 20, letterSpacing: 0.3 },
 
+  pipelineBlock: { alignItems: 'center', marginBottom: 20, width: '100%' },
+  pipelineLabel: {
+    fontSize: 10, color: C.textLight, fontWeight: '700',
+    textTransform: 'uppercase', letterSpacing: 1, marginBottom: 6,
+  },
+  pipelineToggle: {
+    flexDirection: 'row', backgroundColor: C.blueLight, borderRadius: 10,
+    padding: 3, borderWidth: 1, borderColor: C.blueBorder,
+  },
+  pipelineOption: { paddingVertical: 8, paddingHorizontal: 18, borderRadius: 8 },
+  pipelineOptionActive: {
+    backgroundColor: C.blue,
+    shadowColor: C.blue, shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.3, shadowRadius: 4, elevation: 2,
+  },
+  pipelineOptionText: { fontSize: 13, fontWeight: '600', color: C.blueMid },
+  pipelineOptionTextActive: { color: C.white },
+  pipelineWarning: { fontSize: 11, color: C.gold, marginTop: 8, textAlign: 'center' },
+
   loadPatientButton: {
     borderWidth: 1.5, borderColor: C.gold, borderStyle: 'dashed',
     paddingVertical: 10, paddingHorizontal: 24, borderRadius: 10, marginBottom: 32,
@@ -969,6 +1067,11 @@ const styles = StyleSheet.create({
   backButton: { width: 80 },
   backButtonText: { color: C.gold, fontSize: 16, fontWeight: '600' },
   tsTitle: { fontSize: 17, fontWeight: '700', color: C.blue },
+  tsPipelineBadge: {
+    fontSize: 10, fontWeight: '700', color: C.blueMid, textTransform: 'uppercase',
+    letterSpacing: 0.5, backgroundColor: C.blueLight, borderWidth: 1, borderColor: C.blueBorder,
+    borderRadius: 6, paddingVertical: 4, paddingHorizontal: 8, width: 80, textAlign: 'center',
+  },
   tsPatientStrip: {
     backgroundColor: C.blueLight, paddingHorizontal: 20, paddingVertical: 10,
     borderBottomWidth: 1, borderBottomColor: C.blueBorder,
