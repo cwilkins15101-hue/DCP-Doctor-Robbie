@@ -18,6 +18,8 @@ const ANTHROPIC_API_KEY = process.env.EXPO_PUBLIC_ANTHROPIC_API_KEY;
 // ---------------------------------------------------------------------------
 const PIPELINES = { CLAUDE: 'claude', DRAGON: 'dragon' };
 const PIPELINE_LABELS = { [PIPELINES.CLAUDE]: 'Claude', [PIPELINES.DRAGON]: 'Dragon Copilot' };
+// Shorter labels for the small header badge, which has limited width.
+const PIPELINE_BADGE_LABELS = { [PIPELINES.CLAUDE]: 'Claude', [PIPELINES.DRAGON]: 'Dragon' };
 
 // ---------------------------------------------------------------------------
 // Color tokens — Blue & Gold
@@ -233,7 +235,9 @@ function wait(ms) {
 async function identifySpeakersDragonPlaceholder(transcript) {
   console.log('Dragon Copilot placeholder: labeling speakers (mock, no API call made)');
   await wait(800);
-  const sentences = transcript.split(/(?<=[.?!])\s+/).filter(Boolean);
+  const sentences = (transcript.match(/[^.!?]+[.!?]*/g) || [transcript])
+    .map(s => s.trim())
+    .filter(Boolean);
   return sentences
     .map((sentence, i) => `${i % 2 === 0 ? 'Doctor' : 'Patient'}: ${sentence}`)
     .join('\n');
@@ -600,7 +604,7 @@ export default function App() {
               <Text style={styles.backButtonText}>‹ Back</Text>
             </TouchableOpacity>
             <Text style={styles.tsTitle}>Transcript</Text>
-            <Text style={styles.tsPipelineBadge}>{PIPELINE_LABELS[pipeline]}</Text>
+            <Text style={styles.tsPipelineBadge} numberOfLines={1}>{PIPELINE_BADGE_LABELS[pipeline]}</Text>
           </View>
 
           {/* Patient strip */}
