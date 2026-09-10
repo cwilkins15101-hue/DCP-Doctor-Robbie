@@ -9,6 +9,7 @@
     "web": "expo start --web"
   },
   "dependencies": {
+    "@azure/msal-browser": "^5.21.0",
     "@expo/vector-icons": "^15.0.3",
     "expo": "~54.0.0",
     "expo-av": "^16.0.8",

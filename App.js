@@ -8,6 +8,7 @@ import { Audio } from 'expo-av';
 import * as DocumentPicker from 'expo-document-picker';
 import { StatusBar } from 'expo-status-bar';
 import { Ionicons } from '@expo/vector-icons';
+import { DragonCopilotWeb } from './dragonCopilotWeb';
 
 const OPENAI_API_KEY = process.env.EXPO_PUBLIC_OPENAI_API_KEY;
 const ANTHROPIC_API_KEY = process.env.EXPO_PUBLIC_ANTHROPIC_API_KEY;
@@ -344,8 +345,23 @@ export default function App() {
   const logData = useDebugLog();
   const [logModalVisible, setLogModalVisible] = useState(false);
 
+  // Dragon Copilot (web) — real SDK integration state
+  const [dragonSignedIn, setDragonSignedIn] = useState(false);
+  const [dragonInitializing, setDragonInitializing] = useState(false);
+  const [dragonError, setDragonError] = useState('');
+  const [dragonRecordingMode, setDragonRecordingMode] = useState(null);
+  const [dragonUploadStatus, setDragonUploadStatus] = useState(null);
+  const [dragonReviewUrl, setDragonReviewUrl] = useState(null);
+  const dragonCleanupRef = useRef(null);
+
   const pulseAnim = useRef(new Animated.Value(1)).current;
   const timerRef = useRef(null);
+
+  useEffect(() => {
+    return () => {
+      if (dragonCleanupRef.current) dragonCleanupRef.current();
+    };
+  }, []);
 
   useEffect(() => {
     (async () => {
@@ -566,6 +582,53 @@ export default function App() {
     }
   }
 
+  // ---- Dragon Copilot (web) ----
+
+  async function handleDragonSignIn() {
+    setDragonError('');
+    setDragonInitializing(true);
+    try {
+      await DragonCopilotWeb.signIn();
+      await DragonCopilotWeb.ensureInitialized();
+      await DragonCopilotWeb.setSessionData(selectedPatient);
+      dragonCleanupRef.current = DragonCopilotWeb.addEventListeners({
+        onRecordingStarted: (detail) => setDragonRecordingMode(detail?.recordingMode ?? 'ambient'),
+        onRecordingStopped: () => setDragonRecordingMode(null),
+        onUploadStatusChanged: (status) => setDragonUploadStatus(status),
+        onError: (detail) => setDragonError(detail?.message ?? 'Dragon Copilot error'),
+      });
+      setDragonSignedIn(true);
+    } catch (err) {
+      setDragonError(String(err?.message ?? err));
+    } finally {
+      setDragonInitializing(false);
+    }
+  }
+
+  function handleToggleDragonRecording() {
+    setDragonError('');
+    try {
+      DragonCopilotWeb.toggleAmbientRecording();
+    } catch (err) {
+      setDragonError(String(err?.message ?? err));
+    }
+  }
+
+  async function handleReviewDragonNote() {
+    setDragonError('');
+    try {
+      const url = await DragonCopilotWeb.getReviewUrl();
+      if (!url) {
+        setDragonError('Dragon Copilot did not return a review URL.');
+        return;
+      }
+      setDragonReviewUrl(url);
+      setScreen('dragonReview');
+    } catch (err) {
+      setDragonError(String(err?.message ?? err));
+    }
+  }
+
   // ---- Patient display helpers ----
 
   function patientDisplayName(patient) {
@@ -673,6 +736,121 @@ export default function App() {
   }
 
   // =========================================================================
+  // Dragon Copilot session screen (web only) — sign in, then start/stop
+  // ambient recording via the real Dragon Copilot SDK.
+  // =========================================================================
+  if (screen === 'dragonSession') {
+    const missingKeys = DragonCopilotWeb.missingConfigKeys();
+    return (
+      <SafeAreaView style={styles.safeArea}>
+        <StatusBar style="auto" />
+        <View style={styles.tsHeader}>
+          <TouchableOpacity onPress={() => setScreen('record')} style={styles.backButton}>
+            <Text style={styles.backButtonText}>‹ Back</Text>
+          </TouchableOpacity>
+          <Text style={styles.tsTitle}>Dragon Copilot</Text>
+          <View style={{ width: 80 }} />
+        </View>
+
+        <ScrollView contentContainerStyle={styles.dragonBody}>
+          {missingKeys.length > 0 ? (
+            <View style={styles.dragonWarningBox}>
+              <Text style={styles.dragonWarningTitle}>Missing configuration</Text>
+              <Text style={styles.dragonWarningText}>
+                Add these to your .env file before Dragon Copilot can connect:
+              </Text>
+              {missingKeys.map((key) => (
+                <Text key={key} style={styles.dragonWarningItem}>• {key}</Text>
+              ))}
+            </View>
+          ) : !dragonSignedIn ? (
+            <View style={styles.dragonCenterBlock}>
+              <Text style={styles.dragonBodyText}>
+                Sign in with Microsoft to connect to Dragon Copilot.
+              </Text>
+              <TouchableOpacity
+                style={[styles.primaryButton, dragonInitializing && styles.buttonDisabled]}
+                onPress={handleDragonSignIn}
+                disabled={dragonInitializing}
+              >
+                {dragonInitializing ? (
+                  <View style={styles.loadingRow}>
+                    <ActivityIndicator color="#fff" size="small" />
+                    <Text style={[styles.primaryButtonText, { marginLeft: 10 }]}>Connecting…</Text>
+                  </View>
+                ) : (
+                  <Text style={styles.primaryButtonText}>Sign in with Microsoft</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          ) : (
+            <View style={styles.dragonCenterBlock}>
+              <TouchableOpacity
+                style={[styles.recordButton, dragonRecordingMode === 'ambient' && styles.recordButtonActive]}
+                onPress={handleToggleDragonRecording}
+                activeOpacity={0.8}
+              >
+                <Ionicons name={dragonRecordingMode === 'ambient' ? 'stop' : 'mic'} size={40} color="#FFFFFF" />
+              </TouchableOpacity>
+              <Text style={styles.recordHint}>
+                {dragonRecordingMode === 'ambient' ? 'Tap to stop ambient recording' : 'Tap to start ambient recording'}
+              </Text>
+              {dragonUploadStatus && (
+                <Text style={styles.dragonStatusText}>Upload status: {dragonUploadStatus}</Text>
+              )}
+              <TouchableOpacity
+                style={[
+                  styles.primaryButton,
+                  styles.dragonReviewButton,
+                  dragonUploadStatus !== 'uploadCompleted' && styles.buttonDisabled,
+                ]}
+                onPress={handleReviewDragonNote}
+                disabled={dragonUploadStatus !== 'uploadCompleted'}
+              >
+                <Text style={styles.primaryButtonText}>Review Note</Text>
+              </TouchableOpacity>
+            </View>
+          )}
+
+          {!!dragonError && <Text style={styles.dragonErrorText}>{dragonError}</Text>}
+        </ScrollView>
+      </SafeAreaView>
+    );
+  }
+
+  // =========================================================================
+  // Dragon Copilot review screen (web only) — embeds Microsoft's own note
+  // review panel in an iframe, as their SDK requires.
+  // =========================================================================
+  if (screen === 'dragonReview') {
+    return (
+      <SafeAreaView style={styles.safeArea}>
+        <StatusBar style="auto" />
+        <View style={styles.tsHeader}>
+          <TouchableOpacity onPress={() => setScreen('dragonSession')} style={styles.backButton}>
+            <Text style={styles.backButtonText}>‹ Back</Text>
+          </TouchableOpacity>
+          <Text style={styles.tsTitle}>Note Review</Text>
+          <View style={{ width: 80 }} />
+        </View>
+        {Platform.OS === 'web' && dragonReviewUrl ? (
+          <iframe
+            src={dragonReviewUrl}
+            data-dragon-iframe
+            allow="microphone"
+            title="Dragon Copilot Review"
+            style={{ flex: 1, border: 'none', width: '100%' }}
+          />
+        ) : (
+          <View style={styles.dragonCenterBlock}>
+            <Text style={styles.dragonBodyText}>No review available.</Text>
+          </View>
+        )}
+      </SafeAreaView>
+    );
+  }
+
+  // =========================================================================
   // Summary screen
   // =========================================================================
   if (screen === 'summary') {
@@ -768,7 +946,9 @@ export default function App() {
           </View>
           {pipeline === PIPELINES.DRAGON && (
             <Text style={styles.pipelineWarning}>
-              Placeholder only — Dragon Copilot API not yet connected.
+              {Platform.OS === 'web'
+                ? 'Uses the real Dragon Copilot web integration.'
+                : 'Placeholder only on mobile — run "npm run web" for the real integration.'}
             </Text>
           )}
         </View>
@@ -791,71 +971,86 @@ export default function App() {
           </TouchableOpacity>
         )}
 
-        {/* Recording area */}
-        <View style={styles.recordingArea}>
-          {isRecording && (
-            <View style={styles.recordingIndicator}>
-              <View style={styles.recordingDot} />
-              <Text style={styles.recordingLabel}>Recording</Text>
-            </View>
-          )}
-
-          <Text style={styles.timer}>{formatDuration(duration)}</Text>
-
-          <Animated.View style={{ transform: [{ scale: pulseAnim }] }}>
-            <TouchableOpacity
-              style={[styles.recordButton, isRecording && styles.recordButtonActive]}
-              onPress={isRecording ? stopRecording : startRecording}
-              activeOpacity={0.8}
-            >
-              <Ionicons
-                name={isRecording ? 'stop' : 'mic'}
-                size={40}
-                color="#FFFFFF"
-              />
-            </TouchableOpacity>
-          </Animated.View>
-
-          <Text style={styles.recordHint}>
-            {isRecording ? 'Tap to stop' : audioUri ? 'Tap to re-record' : 'Tap to begin recording'}
-          </Text>
-        </View>
-
-        {/* Upload divider */}
-        <View style={styles.dividerRow}>
-          <View style={styles.dividerLine} />
-          <Text style={styles.dividerText}>or</Text>
-          <View style={styles.dividerLine} />
-        </View>
-
-        <TouchableOpacity style={styles.uploadButton} onPress={pickAudioFile}>
-          <Text style={styles.uploadButtonText}>Upload Audio File</Text>
-        </TouchableOpacity>
-
-        {/* Actions after audio is ready */}
-        {audioUri && !isRecording && (
-          <View style={styles.actions}>
-            <Text style={styles.readyText}>
-              {audioName ?? 'Recording'}{duration > 0 ? ` (${formatDuration(duration)})` : ''}
+        {pipeline === PIPELINES.DRAGON && Platform.OS === 'web' ? (
+          /* Dragon Copilot manages its own recording and note review, so the
+             local recorder/upload flow below doesn't apply on web. */
+          <View style={styles.dragonEntry}>
+            <Text style={styles.dragonEntryText}>
+              Dragon Copilot handles recording and note review in its own panel.
             </Text>
-            <TouchableOpacity
-              style={[styles.primaryButton, transcribing && styles.buttonDisabled]}
-              onPress={handleTranscribe}
-              disabled={transcribing}
-            >
-              {transcribing ? (
-                <View style={styles.loadingRow}>
-                  <ActivityIndicator color="#fff" size="small" />
-                  <Text style={[styles.primaryButtonText, { marginLeft: 10 }]}>{transcribeStep}</Text>
-                </View>
-              ) : (
-                <Text style={styles.primaryButtonText}>Transcribe & Summarize</Text>
-              )}
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.secondaryButton} onPress={handleDiscard} disabled={transcribing}>
-              <Text style={styles.secondaryButtonText}>Discard</Text>
+            <TouchableOpacity style={styles.primaryButton} onPress={() => setScreen('dragonSession')}>
+              <Text style={styles.primaryButtonText}>Continue with Dragon Copilot</Text>
             </TouchableOpacity>
           </View>
+        ) : (
+          <>
+            {/* Recording area */}
+            <View style={styles.recordingArea}>
+              {isRecording && (
+                <View style={styles.recordingIndicator}>
+                  <View style={styles.recordingDot} />
+                  <Text style={styles.recordingLabel}>Recording</Text>
+                </View>
+              )}
+
+              <Text style={styles.timer}>{formatDuration(duration)}</Text>
+
+              <Animated.View style={{ transform: [{ scale: pulseAnim }] }}>
+                <TouchableOpacity
+                  style={[styles.recordButton, isRecording && styles.recordButtonActive]}
+                  onPress={isRecording ? stopRecording : startRecording}
+                  activeOpacity={0.8}
+                >
+                  <Ionicons
+                    name={isRecording ? 'stop' : 'mic'}
+                    size={40}
+                    color="#FFFFFF"
+                  />
+                </TouchableOpacity>
+              </Animated.View>
+
+              <Text style={styles.recordHint}>
+                {isRecording ? 'Tap to stop' : audioUri ? 'Tap to re-record' : 'Tap to begin recording'}
+              </Text>
+            </View>
+
+            {/* Upload divider */}
+            <View style={styles.dividerRow}>
+              <View style={styles.dividerLine} />
+              <Text style={styles.dividerText}>or</Text>
+              <View style={styles.dividerLine} />
+            </View>
+
+            <TouchableOpacity style={styles.uploadButton} onPress={pickAudioFile}>
+              <Text style={styles.uploadButtonText}>Upload Audio File</Text>
+            </TouchableOpacity>
+
+            {/* Actions after audio is ready */}
+            {audioUri && !isRecording && (
+              <View style={styles.actions}>
+                <Text style={styles.readyText}>
+                  {audioName ?? 'Recording'}{duration > 0 ? ` (${formatDuration(duration)})` : ''}
+                </Text>
+                <TouchableOpacity
+                  style={[styles.primaryButton, transcribing && styles.buttonDisabled]}
+                  onPress={handleTranscribe}
+                  disabled={transcribing}
+                >
+                  {transcribing ? (
+                    <View style={styles.loadingRow}>
+                      <ActivityIndicator color="#fff" size="small" />
+                      <Text style={[styles.primaryButtonText, { marginLeft: 10 }]}>{transcribeStep}</Text>
+                    </View>
+                  ) : (
+                    <Text style={styles.primaryButtonText}>Transcribe & Summarize</Text>
+                  )}
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.secondaryButton} onPress={handleDiscard} disabled={transcribing}>
+                  <Text style={styles.secondaryButtonText}>Discard</Text>
+                </TouchableOpacity>
+              </View>
+            )}
+          </>
         )}
       </View>
 
@@ -969,6 +1164,23 @@ const styles = StyleSheet.create({
   pipelineOptionText: { fontSize: 13, fontWeight: '600', color: C.blueMid },
   pipelineOptionTextActive: { color: C.white },
   pipelineWarning: { fontSize: 11, color: C.gold, marginTop: 8, textAlign: 'center' },
+
+  dragonEntry: { alignItems: 'center', gap: 16, width: '100%' },
+  dragonEntryText: { fontSize: 14, color: C.textMid, textAlign: 'center', lineHeight: 20 },
+
+  dragonBody: { padding: 20, flexGrow: 1 },
+  dragonCenterBlock: { alignItems: 'center', gap: 16, marginTop: 24 },
+  dragonBodyText: { fontSize: 14, color: C.textMid, textAlign: 'center', lineHeight: 20 },
+  dragonStatusText: { fontSize: 13, color: C.blueMid, fontWeight: '600' },
+  dragonReviewButton: { marginTop: 8 },
+  dragonErrorText: { fontSize: 13, color: C.danger, textAlign: 'center', marginTop: 20, lineHeight: 18 },
+  dragonWarningBox: {
+    backgroundColor: C.goldLight, borderWidth: 1, borderColor: C.gold,
+    borderRadius: 12, padding: 16, gap: 6,
+  },
+  dragonWarningTitle: { fontSize: 14, fontWeight: '700', color: C.textDark },
+  dragonWarningText: { fontSize: 13, color: C.textMid, marginBottom: 4 },
+  dragonWarningItem: { fontSize: 12, color: C.textDark, fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace' },
 
   loadPatientButton: {
     borderWidth: 1.5, borderColor: C.gold, borderStyle: 'dashed',
