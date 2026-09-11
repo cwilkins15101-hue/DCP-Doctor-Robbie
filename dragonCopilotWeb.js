@@ -43,6 +43,26 @@ const MSAL_CONFIG = {
   scopes: ['user.read'],
 };
 
+// Token-launch integration — a separate, simpler way to reach Dragon
+// Copilot: sign in, then POST a form that opens Dragon Copilot's own web
+// app in a new tab, fully set up for this patient. No SDK script or iframe
+// needed. Based on a working "Token Launch Tester" tool provided directly
+// for this partner account — the defaults below came from that tool.
+const TOKEN_LAUNCH_CONFIG = {
+  url:
+    process.env.EXPO_PUBLIC_DRAGON_TOKEN_LAUNCH_URL ||
+    'https://dragon-ehr.copilot.us.dragon.com/api/sectra/token-launch',
+  productId: process.env.EXPO_PUBLIC_DRAGON_PRODUCT_ID || '4f939ade-287a-416d-8484-1e64013039dd',
+  // Requesting this one scope from the Dragon Copilot API application should
+  // return a token covering every scope this account has been consented
+  // for (ConfigService.Access, SessionService.Access, StreamAudio, etc.) —
+  // confirmed from a real token's contents, but not yet tested live.
+  scope:
+    process.env.EXPO_PUBLIC_DRAGON_TOKEN_LAUNCH_SCOPE ||
+    'api://40d36082-d340-492f-a5af-e42ef68f4b2b/access_as_user',
+  clientName: 'doctor-robbie',
+};
+
 // Config keys required before the real integration can run. Anything missing
 // is surfaced to the UI instead of failing deep inside an SDK call.
 function missingConfigKeys() {
@@ -129,6 +149,12 @@ async function acquireAccessToken(scope) {
 let initializedPromise = null;
 function ensureInitialized() {
   if (initializedPromise) return initializedPromise;
+  const missing = missingConfigKeys();
+  if (missing.length > 0) {
+    return Promise.reject(
+      new Error(`Dragon Copilot SDK is missing configuration: ${missing.join(', ')}`)
+    );
+  }
   initializedPromise = (async () => {
     const sdk = await loadSdkScript();
     // The speech broker must be initialized before dragon.initialize().
@@ -248,8 +274,84 @@ async function getReviewUrl() {
   return urls?.baseUrl ?? null;
 }
 
+// Minimal config needed just to attempt Microsoft sign-in — separate from
+// the fuller checks below, so a signed-in user isn't blocked from the
+// token-launch path just because the SDK-only fields are still empty.
+function signInMissingConfigKeys() {
+  const required = { EXPO_PUBLIC_ENTRA_CLIENT_ID: MSAL_CONFIG.clientId };
+  return Object.entries(required)
+    .filter(([, value]) => !value)
+    .map(([key]) => key);
+}
+
+// Config keys required for the token-launch path — a much shorter list than
+// the SDK path above, since it doesn't need the three service URLs/scopes.
+function tokenLaunchMissingConfigKeys() {
+  const required = {
+    EXPO_PUBLIC_DRAGON_PARTNER_GUID: DRAGON_CONFIG.partnerGuid,
+    EXPO_PUBLIC_DRAGON_ENVIRONMENT_ID: DRAGON_CONFIG.environmentId,
+    EXPO_PUBLIC_ENTRA_CLIENT_ID: MSAL_CONFIG.clientId,
+  };
+  return Object.entries(required)
+    .filter(([, value]) => !value)
+    .map(([key]) => key);
+}
+
+function createCorrelationId() {
+  return globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+// Opens Dragon Copilot's hosted web app in a new tab via a POSTed form,
+// fully signed in and pre-filled with this patient's info.
+// launchType: 'copilot' (start an ambient encounter) or 'summaryFeedback'
+// (jump straight to reviewing/feeding back on a generated note).
+async function launchTokenFlow(patient, launchType = 'copilot') {
+  await ensureMsal();
+  if (!msalAccount) throw new Error('Not signed in to Microsoft Entra yet.');
+
+  const response = await msalApp.acquireTokenSilent({
+    scopes: [TOKEN_LAUNCH_CONFIG.scope],
+    account: msalAccount,
+    forceRefresh: false,
+  });
+
+  const payload = {
+    partnerId: DRAGON_CONFIG.partnerGuid,
+    orgId: DRAGON_CONFIG.environmentId,
+    productId: TOKEN_LAUNCH_CONFIG.productId,
+    clientName: TOKEN_LAUNCH_CONFIG.clientName,
+    correlationId: createCorrelationId(),
+    launchType,
+    sectionName: 'sectionA',
+    documentVersion: '1',
+    documentSections: 'section1',
+    appVersion: '1',
+    accessToken: response.accessToken,
+    patientName: patient?.['Patient Name'] ?? 'Unknown',
+    patientDob: patient?.['DOB'] ?? '',
+    patientMrn: patient?.['MRN'] ?? '',
+    patientGender: patient?.['Gender'] ?? '',
+  };
+
+  const form = document.createElement('form');
+  form.method = 'POST';
+  form.action = TOKEN_LAUNCH_CONFIG.url;
+  form.target = '_blank';
+
+  const input = document.createElement('input');
+  input.type = 'hidden';
+  input.name = 'data';
+  input.value = JSON.stringify(payload);
+  form.appendChild(input);
+
+  document.body.appendChild(form);
+  form.submit();
+  document.body.removeChild(form);
+}
+
 export const DragonCopilotWeb = {
   missingConfigKeys,
+  signInMissingConfigKeys,
   ensureInitialized,
   isSignedIn,
   signIn,
@@ -257,4 +359,6 @@ export const DragonCopilotWeb = {
   toggleAmbientRecording,
   addEventListeners,
   getReviewUrl,
+  tokenLaunchMissingConfigKeys,
+  launchTokenFlow,
 };
