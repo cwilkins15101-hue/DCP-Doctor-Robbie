@@ -589,6 +589,14 @@ export default function App() {
     setDragonInitializing(true);
     try {
       await DragonCopilotWeb.signIn();
+      await DragonCopilotWeb.ensureInitialized();
+      await DragonCopilotWeb.setSessionData(selectedPatient);
+      dragonCleanupRef.current = DragonCopilotWeb.addEventListeners({
+        onRecordingStarted: (detail) => setDragonRecordingMode(detail?.recordingMode ?? 'ambient'),
+        onRecordingStopped: () => setDragonRecordingMode(null),
+        onUploadStatusChanged: (status) => setDragonUploadStatus(status),
+        onError: (detail) => setDragonError(detail?.message ?? 'Dragon Copilot error'),
+      });
       setDragonSignedIn(true);
     } catch (err) {
       setDragonError(String(err?.message ?? err));
@@ -597,35 +605,9 @@ export default function App() {
     }
   }
 
-  async function handleTokenLaunch(launchType) {
+  function handleToggleDragonRecording() {
     setDragonError('');
     try {
-      await DragonCopilotWeb.launchTokenFlow(selectedPatient, launchType);
-    } catch (err) {
-      setDragonError(String(err?.message ?? err));
-    }
-  }
-
-  // Loads the SDK and sends session data on first use of the embedded
-  // recorder — kept separate from sign-in so a user who only wants the
-  // token-launch path isn't blocked by the SDK's extra config requirements.
-  async function ensureDragonSdkReady() {
-    await DragonCopilotWeb.ensureInitialized();
-    await DragonCopilotWeb.setSessionData(selectedPatient);
-    if (!dragonCleanupRef.current) {
-      dragonCleanupRef.current = DragonCopilotWeb.addEventListeners({
-        onRecordingStarted: (detail) => setDragonRecordingMode(detail?.recordingMode ?? 'ambient'),
-        onRecordingStopped: () => setDragonRecordingMode(null),
-        onUploadStatusChanged: (status) => setDragonUploadStatus(status),
-        onError: (detail) => setDragonError(detail?.message ?? 'Dragon Copilot error'),
-      });
-    }
-  }
-
-  async function handleToggleDragonRecording() {
-    setDragonError('');
-    try {
-      await ensureDragonSdkReady();
       DragonCopilotWeb.toggleAmbientRecording();
     } catch (err) {
       setDragonError(String(err?.message ?? err));
@@ -635,7 +617,6 @@ export default function App() {
   async function handleReviewDragonNote() {
     setDragonError('');
     try {
-      await ensureDragonSdkReady();
       const url = await DragonCopilotWeb.getReviewUrl();
       if (!url) {
         setDragonError('Dragon Copilot did not return a review URL.');
@@ -759,7 +740,7 @@ export default function App() {
   // ambient recording via the real Dragon Copilot SDK.
   // =========================================================================
   if (screen === 'dragonSession') {
-    const missingKeys = DragonCopilotWeb.signInMissingConfigKeys();
+    const missingKeys = DragonCopilotWeb.missingConfigKeys();
     return (
       <SafeAreaView style={styles.safeArea}>
         <StatusBar style="auto" />
@@ -803,66 +784,32 @@ export default function App() {
               </TouchableOpacity>
             </View>
           ) : (
-            <>
-              {/* Token-launch: opens Dragon Copilot's own app in a new tab */}
-              <View style={styles.dragonCenterBlock}>
-                <Text style={styles.dragonSectionTitle}>Open Dragon Copilot</Text>
-                <Text style={styles.dragonBodyText}>
-                  Opens Dragon Copilot's own app in a new tab, already set up for this patient.
-                </Text>
-                {DragonCopilotWeb.tokenLaunchMissingConfigKeys().length > 0 ? (
-                  <Text style={styles.dragonWarningItem}>
-                    Missing: {DragonCopilotWeb.tokenLaunchMissingConfigKeys().join(', ')}
-                  </Text>
-                ) : (
-                  <>
-                    <TouchableOpacity style={styles.primaryButton} onPress={() => handleTokenLaunch('copilot')}>
-                      <Text style={styles.primaryButtonText}>Start Encounter</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      style={[styles.primaryButton, styles.dragonReviewButton]}
-                      onPress={() => handleTokenLaunch('summaryFeedback')}
-                    >
-                      <Text style={styles.primaryButtonText}>Review Summary</Text>
-                    </TouchableOpacity>
-                  </>
-                )}
-              </View>
-
-              <View style={styles.dividerRow}>
-                <View style={styles.dividerLine} />
-                <Text style={styles.dividerText}>or use the embedded recorder</Text>
-                <View style={styles.dividerLine} />
-              </View>
-
-              {/* SDK path: ambient recording + iframe review, embedded in our own screens */}
-              <View style={styles.dragonCenterBlock}>
-                <TouchableOpacity
-                  style={[styles.recordButton, dragonRecordingMode === 'ambient' && styles.recordButtonActive]}
-                  onPress={handleToggleDragonRecording}
-                  activeOpacity={0.8}
-                >
-                  <Ionicons name={dragonRecordingMode === 'ambient' ? 'stop' : 'mic'} size={40} color="#FFFFFF" />
-                </TouchableOpacity>
-                <Text style={styles.recordHint}>
-                  {dragonRecordingMode === 'ambient' ? 'Tap to stop ambient recording' : 'Tap to start ambient recording'}
-                </Text>
-                {dragonUploadStatus && (
-                  <Text style={styles.dragonStatusText}>Upload status: {dragonUploadStatus}</Text>
-                )}
-                <TouchableOpacity
-                  style={[
-                    styles.primaryButton,
-                    styles.dragonReviewButton,
-                    dragonUploadStatus !== 'uploadCompleted' && styles.buttonDisabled,
-                  ]}
-                  onPress={handleReviewDragonNote}
-                  disabled={dragonUploadStatus !== 'uploadCompleted'}
-                >
-                  <Text style={styles.primaryButtonText}>Review Note</Text>
-                </TouchableOpacity>
-              </View>
-            </>
+            <View style={styles.dragonCenterBlock}>
+              <TouchableOpacity
+                style={[styles.recordButton, dragonRecordingMode === 'ambient' && styles.recordButtonActive]}
+                onPress={handleToggleDragonRecording}
+                activeOpacity={0.8}
+              >
+                <Ionicons name={dragonRecordingMode === 'ambient' ? 'stop' : 'mic'} size={40} color="#FFFFFF" />
+              </TouchableOpacity>
+              <Text style={styles.recordHint}>
+                {dragonRecordingMode === 'ambient' ? 'Tap to stop ambient recording' : 'Tap to start ambient recording'}
+              </Text>
+              {dragonUploadStatus && (
+                <Text style={styles.dragonStatusText}>Upload status: {dragonUploadStatus}</Text>
+              )}
+              <TouchableOpacity
+                style={[
+                  styles.primaryButton,
+                  styles.dragonReviewButton,
+                  dragonUploadStatus !== 'uploadCompleted' && styles.buttonDisabled,
+                ]}
+                onPress={handleReviewDragonNote}
+                disabled={dragonUploadStatus !== 'uploadCompleted'}
+              >
+                <Text style={styles.primaryButtonText}>Review Note</Text>
+              </TouchableOpacity>
+            </View>
           )}
 
           {!!dragonError && <Text style={styles.dragonErrorText}>{dragonError}</Text>}
@@ -1223,7 +1170,6 @@ const styles = StyleSheet.create({
 
   dragonBody: { padding: 20, flexGrow: 1 },
   dragonCenterBlock: { alignItems: 'center', gap: 16, marginTop: 24 },
-  dragonSectionTitle: { fontSize: 15, fontWeight: '700', color: C.blue },
   dragonBodyText: { fontSize: 14, color: C.textMid, textAlign: 'center', lineHeight: 20 },
   dragonStatusText: { fontSize: 13, color: C.blueMid, fontWeight: '600' },
   dragonReviewButton: { marginTop: 8 },
