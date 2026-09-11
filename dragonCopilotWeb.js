@@ -43,6 +43,16 @@ const MSAL_CONFIG = {
   scopes: ['user.read'],
 };
 
+// Minimal config needed just to attempt Microsoft sign-in — separate from
+// the fuller check below, so a signed-in user isn't blocked from anything
+// just because the SDK-only fields are still empty.
+function signInMissingConfigKeys() {
+  const required = { EXPO_PUBLIC_ENTRA_CLIENT_ID: MSAL_CONFIG.clientId };
+  return Object.entries(required)
+    .filter(([, value]) => !value)
+    .map(([key]) => key);
+}
+
 // Config keys required before the real integration can run. Anything missing
 // is surfaced to the UI instead of failing deep inside an SDK call.
 function missingConfigKeys() {
@@ -129,6 +139,12 @@ async function acquireAccessToken(scope) {
 let initializedPromise = null;
 function ensureInitialized() {
   if (initializedPromise) return initializedPromise;
+  const missing = missingConfigKeys();
+  if (missing.length > 0) {
+    return Promise.reject(
+      new Error(`Dragon Copilot SDK is missing configuration: ${missing.join(', ')}`)
+    );
+  }
   initializedPromise = (async () => {
     const sdk = await loadSdkScript();
     // The speech broker must be initialized before dragon.initialize().
@@ -250,6 +266,7 @@ async function getReviewUrl() {
 
 export const DragonCopilotWeb = {
   missingConfigKeys,
+  signInMissingConfigKeys,
   ensureInitialized,
   isSignedIn,
   signIn,

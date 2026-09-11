@@ -589,14 +589,6 @@ export default function App() {
     setDragonInitializing(true);
     try {
       await DragonCopilotWeb.signIn();
-      await DragonCopilotWeb.ensureInitialized();
-      await DragonCopilotWeb.setSessionData(selectedPatient);
-      dragonCleanupRef.current = DragonCopilotWeb.addEventListeners({
-        onRecordingStarted: (detail) => setDragonRecordingMode(detail?.recordingMode ?? 'ambient'),
-        onRecordingStopped: () => setDragonRecordingMode(null),
-        onUploadStatusChanged: (status) => setDragonUploadStatus(status),
-        onError: (detail) => setDragonError(detail?.message ?? 'Dragon Copilot error'),
-      });
       setDragonSignedIn(true);
     } catch (err) {
       setDragonError(String(err?.message ?? err));
@@ -605,9 +597,26 @@ export default function App() {
     }
   }
 
-  function handleToggleDragonRecording() {
+  // Loads the SDK and sends session data on first use of the recorder —
+  // kept separate from sign-in so the extra SDK-only config requirements
+  // (medical server URL, etc.) don't block signing in itself.
+  async function ensureDragonSdkReady() {
+    await DragonCopilotWeb.ensureInitialized();
+    await DragonCopilotWeb.setSessionData(selectedPatient);
+    if (!dragonCleanupRef.current) {
+      dragonCleanupRef.current = DragonCopilotWeb.addEventListeners({
+        onRecordingStarted: (detail) => setDragonRecordingMode(detail?.recordingMode ?? 'ambient'),
+        onRecordingStopped: () => setDragonRecordingMode(null),
+        onUploadStatusChanged: (status) => setDragonUploadStatus(status),
+        onError: (detail) => setDragonError(detail?.message ?? 'Dragon Copilot error'),
+      });
+    }
+  }
+
+  async function handleToggleDragonRecording() {
     setDragonError('');
     try {
+      await ensureDragonSdkReady();
       DragonCopilotWeb.toggleAmbientRecording();
     } catch (err) {
       setDragonError(String(err?.message ?? err));
@@ -617,6 +626,7 @@ export default function App() {
   async function handleReviewDragonNote() {
     setDragonError('');
     try {
+      await ensureDragonSdkReady();
       const url = await DragonCopilotWeb.getReviewUrl();
       if (!url) {
         setDragonError('Dragon Copilot did not return a review URL.');
@@ -740,7 +750,7 @@ export default function App() {
   // ambient recording via the real Dragon Copilot SDK.
   // =========================================================================
   if (screen === 'dragonSession') {
-    const missingKeys = DragonCopilotWeb.missingConfigKeys();
+    const missingKeys = DragonCopilotWeb.signInMissingConfigKeys();
     return (
       <SafeAreaView style={styles.safeArea}>
         <StatusBar style="auto" />
