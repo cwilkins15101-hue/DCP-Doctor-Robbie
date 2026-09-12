@@ -9,6 +9,7 @@ import * as DocumentPicker from 'expo-document-picker';
 import { StatusBar } from 'expo-status-bar';
 import { Ionicons } from '@expo/vector-icons';
 import { DragonCopilotWeb } from './dragonCopilotWeb';
+import { DdeClient } from './ddeClient';
 
 const OPENAI_API_KEY = process.env.EXPO_PUBLIC_OPENAI_API_KEY;
 const ANTHROPIC_API_KEY = process.env.EXPO_PUBLIC_ANTHROPIC_API_KEY;
@@ -352,6 +353,9 @@ export default function App() {
   const [dragonRecordingMode, setDragonRecordingMode] = useState(null);
   const [dragonUploadStatus, setDragonUploadStatus] = useState(null);
   const [dragonReviewUrl, setDragonReviewUrl] = useState(null);
+  const [dragonCorrelationId, setDragonCorrelationId] = useState(null);
+  const [dragonDdeChecking, setDragonDdeChecking] = useState(false);
+  const [dragonDdeResult, setDragonDdeResult] = useState(null);
   const dragonCleanupRef = useRef(null);
 
   const pulseAnim = useRef(new Animated.Value(1)).current;
@@ -602,7 +606,8 @@ export default function App() {
   // (medical server URL, etc.) don't block signing in itself.
   async function ensureDragonSdkReady() {
     await DragonCopilotWeb.ensureInitialized();
-    await DragonCopilotWeb.setSessionData(selectedPatient);
+    const correlationId = await DragonCopilotWeb.setSessionData(selectedPatient);
+    setDragonCorrelationId(correlationId);
     if (!dragonCleanupRef.current) {
       dragonCleanupRef.current = DragonCopilotWeb.addEventListeners({
         onRecordingStarted: (detail) => setDragonRecordingMode(detail?.recordingMode ?? 'ambient'),
@@ -636,6 +641,30 @@ export default function App() {
       setScreen('dragonReview');
     } catch (err) {
       setDragonError(String(err?.message ?? err));
+    }
+  }
+
+  // Checks Doctor Robbie's own Dragon Data Exchange server for the result
+  // of this session, once processing has finished on Microsoft's side.
+  async function handleCheckDdeResult() {
+    if (!dragonCorrelationId) {
+      setDragonError('Start an ambient recording first — nothing to check yet.');
+      return;
+    }
+    setDragonError('');
+    setDragonDdeChecking(true);
+    try {
+      const result = await DdeClient.fetchResult(dragonCorrelationId);
+      if (!result) {
+        setDragonError('Still processing — Dragon Copilot hasn’t delivered the note yet. Try again shortly.');
+        return;
+      }
+      setDragonDdeResult(result);
+      setScreen('dragonNote');
+    } catch (err) {
+      setDragonError(String(err?.message ?? err));
+    } finally {
+      setDragonDdeChecking(false);
     }
   }
 
@@ -819,10 +848,63 @@ export default function App() {
               >
                 <Text style={styles.primaryButtonText}>Review Note</Text>
               </TouchableOpacity>
+
+              <View style={styles.dividerRow}>
+                <View style={styles.dividerLine} />
+                <Text style={styles.dividerText}>or</Text>
+                <View style={styles.dividerLine} />
+              </View>
+
+              <Text style={styles.dragonBodyText}>
+                Dragon Copilot processes the note in the background and delivers it to our
+                server. Check here once it's ready.
+              </Text>
+              <TouchableOpacity
+                style={[styles.primaryButton, dragonDdeChecking && styles.buttonDisabled]}
+                onPress={handleCheckDdeResult}
+                disabled={dragonDdeChecking}
+              >
+                {dragonDdeChecking ? (
+                  <View style={styles.loadingRow}>
+                    <ActivityIndicator color="#fff" size="small" />
+                    <Text style={[styles.primaryButtonText, { marginLeft: 10 }]}>Checking…</Text>
+                  </View>
+                ) : (
+                  <Text style={styles.primaryButtonText}>Check for Note</Text>
+                )}
+              </TouchableOpacity>
             </View>
           )}
 
           {!!dragonError && <Text style={styles.dragonErrorText}>{dragonError}</Text>}
+        </ScrollView>
+      </SafeAreaView>
+    );
+  }
+
+  // =========================================================================
+  // Dragon Copilot note screen — shows the data delivered via Dragon Data
+  // Exchange (our own webhook server), in Doctor Robbie's own UI. The exact
+  // shape of this data ("Dragon standard payload") is still being
+  // confirmed, so this renders common field names if present and falls
+  // back to the raw JSON otherwise.
+  // =========================================================================
+  if (screen === 'dragonNote') {
+    const noteBody = dragonDdeResult?.data ?? {};
+    const displayText =
+      noteBody.transcript ?? noteBody.note ?? noteBody.text ?? JSON.stringify(noteBody, null, 2);
+    return (
+      <SafeAreaView style={styles.safeArea}>
+        <StatusBar style="auto" />
+        <View style={styles.tsHeader}>
+          <TouchableOpacity onPress={() => setScreen('dragonSession')} style={styles.backButton}>
+            <Text style={styles.backButtonText}>‹ Back</Text>
+          </TouchableOpacity>
+          <Text style={styles.tsTitle}>Dragon Copilot Note</Text>
+          <View style={{ width: 80 }} />
+        </View>
+        <ScrollView contentContainerStyle={styles.summaryBody}>
+          <Text style={styles.summaryText} selectable>{displayText}</Text>
         </ScrollView>
       </SafeAreaView>
     );

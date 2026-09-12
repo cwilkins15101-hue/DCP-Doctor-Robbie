@@ -209,10 +209,14 @@ function buildSessionData(patient) {
   };
 }
 
+// Returns the correlationId used for this session — the app needs it to
+// later look up the result once Dragon Data Exchange delivers it.
 async function setSessionData(patient) {
   await ensureInitialized();
   const dragon = globalThis.DragonCopilotSDK.dragon;
-  return dragon.recording.ambient.setSessionData(buildSessionData(patient));
+  const sessionData = buildSessionData(patient);
+  await dragon.recording.ambient.setSessionData(sessionData);
+  return sessionData.correlationId;
 }
 
 // Starts or stops ambient recording — the SDK doesn't expose separate

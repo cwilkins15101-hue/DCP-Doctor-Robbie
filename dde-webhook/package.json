@@ -1,0 +1,17 @@
+{
+  "name": "dde-webhook",
+  "version": "1.0.0",
+  "description": "Azure Function that receives Dragon Data Exchange (DDE) webhook notifications for Doctor Robbie, retrieves the associated data, and stores it so the app can pick it up.",
+  "main": "src/functions/*.js",
+  "scripts": {
+    "start": "func start",
+    "provision-webhook": "node scripts/provisionWebhook.js",
+    "test": "node --test test/*.test.js"
+  },
+  "dependencies": {
+    "@azure/data-tables": "^13.3.0",
+    "@azure/functions": "^4.5.1",
+    "@azure/identity": "^4.5.0",
+    "dotenv": "^16.4.5"
+  }
+}

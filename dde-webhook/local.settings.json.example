@@ -1,0 +1,17 @@
+{
+  "IsEncrypted": false,
+  "Values": {
+    "FUNCTIONS_WORKER_RUNTIME": "node",
+    "AzureWebJobsStorage": "UseDevelopmentStorage=true",
+
+    "WEBHOOK_SHARED_SECRET": "",
+    "APP_SHARED_SECRET": "",
+
+    "ENTRA_TENANT_ID": "50b0f407-cfdb-4951-8ec8-ab8f9d4217ea",
+    "ENTRA_CLIENT_ID": "",
+    "ENTRA_CLIENT_SECRET": "",
+
+    "DRAGON_API_SCOPE": "https://partnerapi-qa.ppe.copilot.dragon.com/.default",
+    "DDE_RECOGNIZED_EVENT_TYPES": "encounter_data_ready_complete"
+  }
+}
