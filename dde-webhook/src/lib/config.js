@@ -31,10 +31,11 @@ module.exports = {
   }),
 
   // The audience/scope used both to provision the webhook and to fetch
-  // retrieval data — confirmed from Microsoft's own sample code. Override
-  // via app setting if your environment differs.
+  // retrieval data — this GUID App ID is explicitly documented as the
+  // scope for both non-production and production (same value for both).
+  // Override via app setting if that's ever confirmed to differ.
   dragonApiScope: () =>
-    process.env.DRAGON_API_SCOPE || 'https://partnerapi-qa.ppe.copilot.dragon.com/.default',
+    process.env.DRAGON_API_SCOPE || '105be974-d66d-43c9-b813-57a967bbfd21/.default',
 
   // Table Storage connection — reuses the storage account every Function
   // App already has (AzureWebJobsStorage) unless overridden.

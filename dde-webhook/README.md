@@ -46,7 +46,7 @@ tries a few common field names and falls back to showing the raw JSON.
    | `ENTRA_TENANT_ID` | `50b0f407-cfdb-4951-8ec8-ab8f9d4217ea` |
    | `ENTRA_CLIENT_ID` | your Entra app's Client ID |
    | `ENTRA_CLIENT_SECRET` | the secret value from step 3 |
-   | `DRAGON_API_SCOPE` | `https://partnerapi-qa.ppe.copilot.dragon.com/.default` (or your production scope) |
+   | `DRAGON_API_SCOPE` | `105be974-d66d-43c9-b813-57a967bbfd21/.default` (or your production scope) |
 
 ## Deploying the code
 

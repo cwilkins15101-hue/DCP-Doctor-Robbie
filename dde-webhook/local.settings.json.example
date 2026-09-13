@@ -11,7 +11,7 @@
     "ENTRA_CLIENT_ID": "",
     "ENTRA_CLIENT_SECRET": "",
 
-    "DRAGON_API_SCOPE": "https://partnerapi-qa.ppe.copilot.dragon.com/.default",
+    "DRAGON_API_SCOPE": "105be974-d66d-43c9-b813-57a967bbfd21/.default",
     "DDE_RECOGNIZED_EVENT_TYPES": "encounter_data_ready_complete"
   }
 }

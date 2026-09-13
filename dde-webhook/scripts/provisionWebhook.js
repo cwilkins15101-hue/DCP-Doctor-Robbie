@@ -24,7 +24,7 @@ async function main() {
   const tenantId = requiredEnv('ENTRA_TENANT_ID');
   const clientId = requiredEnv('ENTRA_CLIENT_ID');
   const clientSecret = requiredEnv('ENTRA_CLIENT_SECRET');
-  const scope = process.env.DRAGON_API_SCOPE || 'https://partnerapi-qa.ppe.copilot.dragon.com/.default';
+  const scope = process.env.DRAGON_API_SCOPE || '105be974-d66d-43c9-b813-57a967bbfd21/.default';
   const baseUrl = requiredEnv('DRAGON_API_BASE_URL'); // e.g. https://partnerapi-qa.ppe.copilot.dragon.com
 
   const partnerId = requiredEnv('DRAGON_PARTNER_GUID');
