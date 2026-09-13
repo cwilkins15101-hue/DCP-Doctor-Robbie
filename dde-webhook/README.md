@@ -46,7 +46,7 @@ tries a few common field names and falls back to showing the raw JSON.
    | `ENTRA_TENANT_ID` | `50b0f407-cfdb-4951-8ec8-ab8f9d4217ea` |
    | `ENTRA_CLIENT_ID` | your Entra app's Client ID |
    | `ENTRA_CLIENT_SECRET` | the secret value from step 3 |
-   | `DRAGON_API_SCOPE` | `105be974-d66d-43c9-b813-57a967bbfd21/.default` (or your production scope) |
+   | `DRAGON_API_SCOPE` | `105be974-d66d-43c9-b813-57a967bbfd21/.default` (same value for non-production and production, per Microsoft's docs) |
 
 ## Deploying the code
 
@@ -65,12 +65,15 @@ was built in due to network restrictions there).
 
 ## Registering the webhook
 
-Once deployed, note your Function App's URL, e.g.
-`https://doctor-robbie-dde.azurewebsites.net`. Then:
+Once deployed, get your Function App's **real** URL from the Azure Portal
+Overview page's **"Default domain"** field — Flex Consumption apps get a
+randomized hostname suffix, so it's *not* simply
+`<the-name-you-typed>.azurewebsites.net`. It'll look like
+`https://dr-robbie-gwctbmh0cwc2bzbz.westus3-01.azurewebsites.net`. Then:
 
 ```
 cp .env.example .env
-# fill in .env — WEBHOOK_URL is <your Function App URL>/api/dde-webhook,
+# fill in .env — WEBHOOK_URL is <your Function App's real URL>/api/dde-webhook,
 # and WEBHOOK_SHARED_SECRET must match the app setting from step 4 above
 npm run provision-webhook
 ```
@@ -78,11 +81,16 @@ npm run provision-webhook
 This registers the webhook with Dragon Data Exchange. Re-run it any time
 you change the webhook URL or want to rotate the shared secret.
 
+Confirmed working (as of this account's setup): `DRAGON_API_BASE_URL` is
+`https://partnerapi.copilot.us.dragon.com` — the "non-production" URL
+originally given in the partner portal
+(`partnerapi-qa.ppe.copilot.dragon.com`) does not actually resolve.
+
 ## Wiring up the app
 
 In Doctor Robbie's own `.env`, set:
 ```
-EXPO_PUBLIC_DDE_SERVER_URL=https://doctor-robbie-dde.azurewebsites.net
+EXPO_PUBLIC_DDE_SERVER_URL=<your Function App's real URL, e.g. https://dr-robbie-gwctbmh0cwc2bzbz.westus3-01.azurewebsites.net>
 EXPO_PUBLIC_DDE_APP_SECRET=<the APP_SHARED_SECRET value from step 4>
 ```
 
