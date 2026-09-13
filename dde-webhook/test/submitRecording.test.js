@@ -31,7 +31,7 @@ const { handler } = require('../src/functions/submitRecording');
 
 const noopContext = { log: () => {}, warn: () => {}, error: () => {} };
 
-function fakeFormDataRequest({ headers = {}, fields = {}, audioBytes } = {}) {
+function fakeFormDataRequest({ method = 'POST', headers = {}, fields = {}, audioBytes } = {}) {
   const headerMap = new Map(Object.entries(headers).map(([k, v]) => [k.toLowerCase(), v]));
   const form = new FormData();
   for (const [key, value] of Object.entries(fields)) {
@@ -41,6 +41,7 @@ function fakeFormDataRequest({ headers = {}, fields = {}, audioBytes } = {}) {
     form.append('audio', new Blob([audioBytes]), 'recording.wav');
   }
   return {
+    method,
     headers: { get: (name) => headerMap.get(name.toLowerCase()) ?? null },
     formData: async () => form,
   };
@@ -50,9 +51,22 @@ test.beforeEach(() => {
   recordedCalls.length = 0;
 });
 
+test('OPTIONS preflight returns 204 with CORS headers, without touching auth or the form body', async () => {
+  const res = await handler(fakeFormDataRequest({ method: 'OPTIONS' }), noopContext);
+  assert.equal(res.status, 204);
+  assert.equal(res.headers['Access-Control-Allow-Origin'], '*');
+  assert.match(res.headers['Access-Control-Allow-Methods'], /OPTIONS/);
+  assert.match(res.headers['Access-Control-Allow-Headers'], /x-app-secret/i);
+});
+
 test('rejects requests without the app secret', async () => {
   const res = await handler(fakeFormDataRequest({}), noopContext);
   assert.equal(res.status, 401);
+});
+
+test('real responses also carry CORS headers', async () => {
+  const res = await handler(fakeFormDataRequest({}), noopContext);
+  assert.equal(res.headers['Access-Control-Allow-Origin'], '*');
 });
 
 test('rejects requests with no audio field', async () => {

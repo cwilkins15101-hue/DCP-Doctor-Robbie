@@ -127,9 +127,20 @@ test('POST with recognized event type retrieves and stores the data', async () =
   assert.equal(savedResults[0].payload.customerId, 'cust-1');
 });
 
+test('getResult OPTIONS preflight returns 204 with CORS headers', async () => {
+  const res = await getResultHandler(fakeRequest({ method: 'OPTIONS', headers: {}, query: {} }), noopContext);
+  assert.equal(res.status, 204);
+  assert.equal(res.headers['Access-Control-Allow-Origin'], '*');
+});
+
 test('getResult rejects requests without the app secret', async () => {
   const res = await getResultHandler(fakeRequest({ method: 'GET', headers: {}, query: {} }), noopContext);
   assert.equal(res.status, 401);
+});
+
+test('getResult real responses also carry CORS headers', async () => {
+  const res = await getResultHandler(fakeRequest({ method: 'GET', headers: {}, query: {} }), noopContext);
+  assert.equal(res.headers['Access-Control-Allow-Origin'], '*');
 });
 
 test('getResult returns 400 without a correlationId', async () => {
