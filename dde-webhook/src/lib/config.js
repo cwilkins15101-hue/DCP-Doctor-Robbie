@@ -37,6 +37,27 @@ module.exports = {
   dragonApiScope: () =>
     process.env.DRAGON_API_SCOPE || '105be974-d66d-43c9-b813-57a967bbfd21/.default',
 
+  // Base URL for the Dragon Copilot Partner API (subscriptions,
+  // ambient-sessions). Confirmed reachable; see dde-webhook/README.md.
+  dragonApiBaseUrl: () =>
+    process.env.DRAGON_API_BASE_URL || 'https://partnerapi.copilot.us.dragon.com',
+
+  // A *separate* audience for the Ambient Audio Streaming (AAS) service —
+  // confirmed from Microsoft's official AAS 2.0 reference docs (same value
+  // for non-production and production). Different host, different token
+  // than the Partner API above.
+  aasScope: () =>
+    process.env.AAS_SCOPE || '40d36082-d340-492f-a5af-e42ef68f4b2b/.default',
+  aasBaseUrl: () =>
+    process.env.AAS_BASE_URL || 'https://ambient-audio-service.copilot.us.dragon.com',
+
+  // Partner/customer/product identifiers needed on every ambient-session
+  // and audio-upload call.
+  dragonPartnerGuid: () => required('DRAGON_PARTNER_GUID'),
+  dragonEnvironmentId: () => required('DRAGON_ENVIRONMENT_ID'), // == "customerId" in Dragon's terms
+  dragonProductId: () =>
+    process.env.DRAGON_PRODUCT_ID || '4f939ade-287a-416d-8484-1e64013039dd',
+
   // Table Storage connection — reuses the storage account every Function
   // App already has (AzureWebJobsStorage) unless overridden.
   storageConnectionString: () =>

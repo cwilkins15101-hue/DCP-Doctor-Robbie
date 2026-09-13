@@ -8,7 +8,7 @@ import { Audio } from 'expo-av';
 import * as DocumentPicker from 'expo-document-picker';
 import { StatusBar } from 'expo-status-bar';
 import { Ionicons } from '@expo/vector-icons';
-import { DragonCopilotWeb } from './dragonCopilotWeb';
+import { DragonCopilotBackend } from './dragonCopilotBackend';
 import { DdeClient } from './ddeClient';
 
 const OPENAI_API_KEY = process.env.EXPO_PUBLIC_OPENAI_API_KEY;
@@ -226,46 +226,6 @@ Generate a SOAP note using markdown formatting:
 }
 
 // ---------------------------------------------------------------------------
-// Dragon Copilot — placeholder pipeline. No real Dragon Copilot API is wired
-// up yet; these mocks let the pipeline toggle be exercised end-to-end and
-// are meant to be swapped for real API calls once credentials are available.
-// ---------------------------------------------------------------------------
-function wait(ms) {
-  return new Promise(resolve => setTimeout(resolve, ms));
-}
-
-async function identifySpeakersDragonPlaceholder(transcript) {
-  console.log('Dragon Copilot placeholder: labeling speakers (mock, no API call made)');
-  await wait(800);
-  const sentences = (transcript.match(/[^.!?]+[.!?]*/g) || [transcript])
-    .map(s => s.trim())
-    .filter(Boolean);
-  return sentences
-    .map((sentence, i) => `${i % 2 === 0 ? 'Doctor' : 'Patient'}: ${sentence}`)
-    .join('\n');
-}
-
-async function generateClinicalSummaryDragonPlaceholder(transcript, patient) {
-  console.log('Dragon Copilot placeholder: generating summary (mock, no API call made)');
-  await wait(1200);
-  const patientName = patient ? patient['Patient Name'] ?? 'Unknown' : 'Unknown';
-  return `## Subjective
-**[Placeholder]** Dragon Copilot is not connected yet — this is mock output standing in for a real API response.
-
-## Objective
-No live data. Connect the Dragon Copilot API to replace this placeholder.
-
-## Assessment
-Pending real integration.
-
-## Plan
-Add Dragon Copilot credentials and swap the placeholder functions for live API calls.
-
----
-Patient: **${patientName}** · Transcript length: ${transcript.length} characters`;
-}
-
-// ---------------------------------------------------------------------------
 // MarkdownText — renders **bold** and ## Section Headers
 // ---------------------------------------------------------------------------
 function MarkdownText({ text, baseStyle }) {
@@ -346,26 +306,15 @@ export default function App() {
   const logData = useDebugLog();
   const [logModalVisible, setLogModalVisible] = useState(false);
 
-  // Dragon Copilot (web) — real SDK integration state
-  const [dragonSignedIn, setDragonSignedIn] = useState(false);
-  const [dragonInitializing, setDragonInitializing] = useState(false);
+  // Dragon Copilot — backend submission state (no sign-in, no SDK: the
+  // recording is uploaded straight to Doctor Robbie's own server)
   const [dragonError, setDragonError] = useState('');
-  const [dragonRecordingMode, setDragonRecordingMode] = useState(null);
-  const [dragonUploadStatus, setDragonUploadStatus] = useState(null);
-  const [dragonReviewUrl, setDragonReviewUrl] = useState(null);
   const [dragonCorrelationId, setDragonCorrelationId] = useState(null);
   const [dragonDdeChecking, setDragonDdeChecking] = useState(false);
   const [dragonDdeResult, setDragonDdeResult] = useState(null);
-  const dragonCleanupRef = useRef(null);
 
   const pulseAnim = useRef(new Animated.Value(1)).current;
   const timerRef = useRef(null);
-
-  useEffect(() => {
-    return () => {
-      if (dragonCleanupRef.current) dragonCleanupRef.current();
-    };
-  }, []);
 
   useEffect(() => {
     (async () => {
@@ -550,10 +499,8 @@ export default function App() {
       const rawText = await transcribeWithWhisper(audioUri, audioName);
       console.log('Whisper result length:', rawText?.length);
 
-      setTranscribeStep(`Identifying speakers (${PIPELINE_LABELS[pipeline]})…`);
-      const labeled = pipeline === PIPELINES.DRAGON
-        ? await identifySpeakersDragonPlaceholder(rawText)
-        : await identifySpeakersClaude(rawText);
+      setTranscribeStep('Identifying speakers…');
+      const labeled = await identifySpeakersClaude(rawText);
 
       setTranscript(labeled);
       setScreen('transcript');
@@ -568,15 +515,13 @@ export default function App() {
   // ---- Summary ----
 
   async function handleGenerateSummary() {
-    if (pipeline === PIPELINES.CLAUDE && !ANTHROPIC_API_KEY) {
+    if (!ANTHROPIC_API_KEY) {
       Alert.alert('Missing API key', 'Add EXPO_PUBLIC_ANTHROPIC_API_KEY to your .env file.');
       return;
     }
     setSummarizing(true);
     try {
-      const text = pipeline === PIPELINES.DRAGON
-        ? await generateClinicalSummaryDragonPlaceholder(transcript, selectedPatient)
-        : await generateClinicalSummaryClaude(transcript, selectedPatient);
+      const text = await generateClinicalSummaryClaude(transcript, selectedPatient);
       setSummary(text);
       setScreen('summary');
     } catch (err) {
@@ -586,69 +531,30 @@ export default function App() {
     }
   }
 
-  // ---- Dragon Copilot (web) ----
+  // ---- Dragon Copilot — plain backend upload, no sign-in, no popup ----
 
-  async function handleDragonSignIn() {
+  async function handleDragonSubmitRecording() {
     setDragonError('');
-    setDragonInitializing(true);
+    setTranscribing(true);
+    setTranscribeStep('Sending to Dragon Copilot…');
     try {
-      await DragonCopilotWeb.signIn();
-      setDragonSignedIn(true);
+      const correlationId = await DragonCopilotBackend.submitRecording(audioUri, audioName, selectedPatient);
+      setDragonCorrelationId(correlationId);
+      setDragonDdeResult(null);
+      setScreen('dragonNote');
     } catch (err) {
-      setDragonError(String(err?.message ?? err));
+      Alert.alert('Dragon Copilot submission failed', String(err?.message ?? err));
     } finally {
-      setDragonInitializing(false);
-    }
-  }
-
-  // Loads the SDK and sends session data on first use of the recorder —
-  // kept separate from sign-in so the extra SDK-only config requirements
-  // (medical server URL, etc.) don't block signing in itself.
-  async function ensureDragonSdkReady() {
-    await DragonCopilotWeb.ensureInitialized();
-    const correlationId = await DragonCopilotWeb.setSessionData(selectedPatient);
-    setDragonCorrelationId(correlationId);
-    if (!dragonCleanupRef.current) {
-      dragonCleanupRef.current = DragonCopilotWeb.addEventListeners({
-        onRecordingStarted: (detail) => setDragonRecordingMode(detail?.recordingMode ?? 'ambient'),
-        onRecordingStopped: () => setDragonRecordingMode(null),
-        onUploadStatusChanged: (status) => setDragonUploadStatus(status),
-        onError: (detail) => setDragonError(detail?.message ?? 'Dragon Copilot error'),
-      });
-    }
-  }
-
-  async function handleToggleDragonRecording() {
-    setDragonError('');
-    try {
-      await ensureDragonSdkReady();
-      DragonCopilotWeb.toggleAmbientRecording();
-    } catch (err) {
-      setDragonError(String(err?.message ?? err));
-    }
-  }
-
-  async function handleReviewDragonNote() {
-    setDragonError('');
-    try {
-      await ensureDragonSdkReady();
-      const url = await DragonCopilotWeb.getReviewUrl();
-      if (!url) {
-        setDragonError('Dragon Copilot did not return a review URL.');
-        return;
-      }
-      setDragonReviewUrl(url);
-      setScreen('dragonReview');
-    } catch (err) {
-      setDragonError(String(err?.message ?? err));
+      setTranscribing(false);
+      setTranscribeStep('');
     }
   }
 
   // Checks Doctor Robbie's own Dragon Data Exchange server for the result
-  // of this session, once processing has finished on Microsoft's side.
+  // of this recording, once processing has finished on Microsoft's side.
   async function handleCheckDdeResult() {
     if (!dragonCorrelationId) {
-      setDragonError('Start an ambient recording first — nothing to check yet.');
+      setDragonError('Nothing to check yet — send a recording first.');
       return;
     }
     setDragonError('');
@@ -656,11 +562,10 @@ export default function App() {
     try {
       const result = await DdeClient.fetchResult(dragonCorrelationId);
       if (!result) {
-        setDragonError('Still processing — Dragon Copilot hasn’t delivered the note yet. Try again shortly.');
+        setDragonError('Still processing — check again in a minute.');
         return;
       }
       setDragonDdeResult(result);
-      setScreen('dragonNote');
     } catch (err) {
       setDragonError(String(err?.message ?? err));
     } finally {
@@ -775,11 +680,19 @@ export default function App() {
   }
 
   // =========================================================================
-  // Dragon Copilot session screen (web only) — sign in, then start/stop
-  // ambient recording via the real Dragon Copilot SDK.
+  // Dragon Copilot screen — shown right after a recording is sent. Shows a
+  // "processing" state with a manual check, then the note once Dragon Data
+  // Exchange (our own webhook server) delivers it. The exact shape of that
+  // data ("Dragon standard payload") is still being confirmed, so this
+  // renders common field names if present and falls back to raw JSON.
   // =========================================================================
-  if (screen === 'dragonSession') {
-    const missingKeys = DragonCopilotWeb.signInMissingConfigKeys();
+  if (screen === 'dragonNote') {
+    const missingKeys = DragonCopilotBackend.missingConfigKeys();
+    const noteBody = dragonDdeResult?.data ?? null;
+    const displayText = noteBody
+      ? (noteBody.transcript ?? noteBody.note ?? noteBody.text ?? JSON.stringify(noteBody, null, 2))
+      : null;
+
     return (
       <SafeAreaView style={styles.safeArea}>
         <StatusBar style="auto" />
@@ -791,152 +704,61 @@ export default function App() {
           <View style={{ width: 80 }} />
         </View>
 
-        <ScrollView contentContainerStyle={styles.dragonBody}>
-          {missingKeys.length > 0 ? (
-            <View style={styles.dragonWarningBox}>
-              <Text style={styles.dragonWarningTitle}>Missing configuration</Text>
-              <Text style={styles.dragonWarningText}>
-                Add these to your .env file before Dragon Copilot can connect:
-              </Text>
-              {missingKeys.map((key) => (
-                <Text key={key} style={styles.dragonWarningItem}>• {key}</Text>
-              ))}
-            </View>
-          ) : !dragonSignedIn ? (
-            <View style={styles.dragonCenterBlock}>
-              <Text style={styles.dragonBodyText}>
-                Sign in with Microsoft to connect to Dragon Copilot.
-              </Text>
+        {displayText ? (
+          <>
+            <ScrollView contentContainerStyle={styles.summaryBody}>
+              <Text style={styles.summaryText} selectable>{displayText}</Text>
+            </ScrollView>
+            <View style={styles.tsFooter}>
               <TouchableOpacity
-                style={[styles.primaryButton, dragonInitializing && styles.buttonDisabled]}
-                onPress={handleDragonSignIn}
-                disabled={dragonInitializing}
+                style={styles.primaryButton}
+                onPress={() => {
+                  setScreen('record');
+                  setAudioUri(null);
+                  setAudioName(null);
+                  setDragonCorrelationId(null);
+                  setDragonDdeResult(null);
+                  setDuration(0);
+                }}
               >
-                {dragonInitializing ? (
-                  <View style={styles.loadingRow}>
-                    <ActivityIndicator color="#fff" size="small" />
-                    <Text style={[styles.primaryButtonText, { marginLeft: 10 }]}>Connecting…</Text>
-                  </View>
-                ) : (
-                  <Text style={styles.primaryButtonText}>Sign in with Microsoft</Text>
-                )}
+                <Text style={styles.primaryButtonText}>New Encounter</Text>
               </TouchableOpacity>
             </View>
-          ) : (
-            <View style={styles.dragonCenterBlock}>
-              <TouchableOpacity
-                style={[styles.recordButton, dragonRecordingMode === 'ambient' && styles.recordButtonActive]}
-                onPress={handleToggleDragonRecording}
-                activeOpacity={0.8}
-              >
-                <Ionicons name={dragonRecordingMode === 'ambient' ? 'stop' : 'mic'} size={40} color="#FFFFFF" />
-              </TouchableOpacity>
-              <Text style={styles.recordHint}>
-                {dragonRecordingMode === 'ambient' ? 'Tap to stop ambient recording' : 'Tap to start ambient recording'}
-              </Text>
-              {dragonUploadStatus && (
-                <Text style={styles.dragonStatusText}>Upload status: {dragonUploadStatus}</Text>
-              )}
-              <TouchableOpacity
-                style={[
-                  styles.primaryButton,
-                  styles.dragonReviewButton,
-                  dragonUploadStatus !== 'uploadCompleted' && styles.buttonDisabled,
-                ]}
-                onPress={handleReviewDragonNote}
-                disabled={dragonUploadStatus !== 'uploadCompleted'}
-              >
-                <Text style={styles.primaryButtonText}>Review Note</Text>
-              </TouchableOpacity>
-
-              <View style={styles.dividerRow}>
-                <View style={styles.dividerLine} />
-                <Text style={styles.dividerText}>or</Text>
-                <View style={styles.dividerLine} />
-              </View>
-
-              <Text style={styles.dragonBodyText}>
-                Dragon Copilot processes the note in the background and delivers it to our
-                server. Check here once it's ready.
-              </Text>
-              <TouchableOpacity
-                style={[styles.primaryButton, dragonDdeChecking && styles.buttonDisabled]}
-                onPress={handleCheckDdeResult}
-                disabled={dragonDdeChecking}
-              >
-                {dragonDdeChecking ? (
-                  <View style={styles.loadingRow}>
-                    <ActivityIndicator color="#fff" size="small" />
-                    <Text style={[styles.primaryButtonText, { marginLeft: 10 }]}>Checking…</Text>
-                  </View>
-                ) : (
-                  <Text style={styles.primaryButtonText}>Check for Note</Text>
-                )}
-              </TouchableOpacity>
-            </View>
-          )}
-
-          {!!dragonError && <Text style={styles.dragonErrorText}>{dragonError}</Text>}
-        </ScrollView>
-      </SafeAreaView>
-    );
-  }
-
-  // =========================================================================
-  // Dragon Copilot note screen — shows the data delivered via Dragon Data
-  // Exchange (our own webhook server), in Doctor Robbie's own UI. The exact
-  // shape of this data ("Dragon standard payload") is still being
-  // confirmed, so this renders common field names if present and falls
-  // back to the raw JSON otherwise.
-  // =========================================================================
-  if (screen === 'dragonNote') {
-    const noteBody = dragonDdeResult?.data ?? {};
-    const displayText =
-      noteBody.transcript ?? noteBody.note ?? noteBody.text ?? JSON.stringify(noteBody, null, 2);
-    return (
-      <SafeAreaView style={styles.safeArea}>
-        <StatusBar style="auto" />
-        <View style={styles.tsHeader}>
-          <TouchableOpacity onPress={() => setScreen('dragonSession')} style={styles.backButton}>
-            <Text style={styles.backButtonText}>‹ Back</Text>
-          </TouchableOpacity>
-          <Text style={styles.tsTitle}>Dragon Copilot Note</Text>
-          <View style={{ width: 80 }} />
-        </View>
-        <ScrollView contentContainerStyle={styles.summaryBody}>
-          <Text style={styles.summaryText} selectable>{displayText}</Text>
-        </ScrollView>
-      </SafeAreaView>
-    );
-  }
-
-  // =========================================================================
-  // Dragon Copilot review screen (web only) — embeds Microsoft's own note
-  // review panel in an iframe, as their SDK requires.
-  // =========================================================================
-  if (screen === 'dragonReview') {
-    return (
-      <SafeAreaView style={styles.safeArea}>
-        <StatusBar style="auto" />
-        <View style={styles.tsHeader}>
-          <TouchableOpacity onPress={() => setScreen('dragonSession')} style={styles.backButton}>
-            <Text style={styles.backButtonText}>‹ Back</Text>
-          </TouchableOpacity>
-          <Text style={styles.tsTitle}>Note Review</Text>
-          <View style={{ width: 80 }} />
-        </View>
-        {Platform.OS === 'web' && dragonReviewUrl ? (
-          <iframe
-            src={dragonReviewUrl}
-            data-dragon-iframe
-            allow="microphone"
-            title="Dragon Copilot Review"
-            style={{ flex: 1, border: 'none', width: '100%' }}
-          />
+          </>
         ) : (
-          <View style={styles.dragonCenterBlock}>
-            <Text style={styles.dragonBodyText}>No review available.</Text>
-          </View>
+          <ScrollView contentContainerStyle={styles.dragonBody}>
+            {missingKeys.length > 0 ? (
+              <View style={styles.dragonWarningBox}>
+                <Text style={styles.dragonWarningTitle}>Missing configuration</Text>
+                <Text style={styles.dragonWarningText}>Add these to your .env file:</Text>
+                {missingKeys.map((key) => (
+                  <Text key={key} style={styles.dragonWarningItem}>• {key}</Text>
+                ))}
+              </View>
+            ) : (
+              <View style={styles.dragonCenterBlock}>
+                <Text style={styles.dragonBodyText}>
+                  Dragon Copilot is processing this recording in the background. This can take
+                  a minute or two — check back to see if it's ready.
+                </Text>
+                <TouchableOpacity
+                  style={[styles.primaryButton, dragonDdeChecking && styles.buttonDisabled]}
+                  onPress={handleCheckDdeResult}
+                  disabled={dragonDdeChecking}
+                >
+                  {dragonDdeChecking ? (
+                    <View style={styles.loadingRow}>
+                      <ActivityIndicator color="#fff" size="small" />
+                      <Text style={[styles.primaryButtonText, { marginLeft: 10 }]}>Checking…</Text>
+                    </View>
+                  ) : (
+                    <Text style={styles.primaryButtonText}>Check for Note</Text>
+                  )}
+                </TouchableOpacity>
+                {!!dragonError && <Text style={styles.dragonErrorText}>{dragonError}</Text>}
+              </View>
+            )}
+          </ScrollView>
         )}
       </SafeAreaView>
     );
@@ -1038,9 +860,7 @@ export default function App() {
           </View>
           {pipeline === PIPELINES.DRAGON && (
             <Text style={styles.pipelineWarning}>
-              {Platform.OS === 'web'
-                ? 'Uses the real Dragon Copilot web integration.'
-                : 'Placeholder only on mobile — run "npm run web" for the real integration.'}
+              Recordings are sent to Dragon Copilot for processing — no transcript review step.
             </Text>
           )}
         </View>
@@ -1063,19 +883,7 @@ export default function App() {
           </TouchableOpacity>
         )}
 
-        {pipeline === PIPELINES.DRAGON && Platform.OS === 'web' ? (
-          /* Dragon Copilot manages its own recording and note review, so the
-             local recorder/upload flow below doesn't apply on web. */
-          <View style={styles.dragonEntry}>
-            <Text style={styles.dragonEntryText}>
-              Dragon Copilot handles recording and note review in its own panel.
-            </Text>
-            <TouchableOpacity style={styles.primaryButton} onPress={() => setScreen('dragonSession')}>
-              <Text style={styles.primaryButtonText}>Continue with Dragon Copilot</Text>
-            </TouchableOpacity>
-          </View>
-        ) : (
-          <>
+        <>
             {/* Recording area */}
             <View style={styles.recordingArea}>
               {isRecording && (
@@ -1125,16 +933,20 @@ export default function App() {
                 </Text>
                 <TouchableOpacity
                   style={[styles.primaryButton, transcribing && styles.buttonDisabled]}
-                  onPress={handleTranscribe}
+                  onPress={pipeline === PIPELINES.DRAGON ? handleDragonSubmitRecording : handleTranscribe}
                   disabled={transcribing}
                 >
                   {transcribing ? (
                     <View style={styles.loadingRow}>
                       <ActivityIndicator color="#fff" size="small" />
-                      <Text style={[styles.primaryButtonText, { marginLeft: 10 }]}>{transcribeStep}</Text>
+                      <Text style={[styles.primaryButtonText, { marginLeft: 10 }]}>
+                        {transcribeStep || 'Working…'}
+                      </Text>
                     </View>
                   ) : (
-                    <Text style={styles.primaryButtonText}>Transcribe & Summarize</Text>
+                    <Text style={styles.primaryButtonText}>
+                      {pipeline === PIPELINES.DRAGON ? 'Send to Dragon Copilot' : 'Transcribe & Summarize'}
+                    </Text>
                   )}
                 </TouchableOpacity>
                 <TouchableOpacity style={styles.secondaryButton} onPress={handleDiscard} disabled={transcribing}>
@@ -1143,7 +955,6 @@ export default function App() {
               </View>
             )}
           </>
-        )}
       </View>
 
       {/* Debug log modal */}
@@ -1257,14 +1068,9 @@ const styles = StyleSheet.create({
   pipelineOptionTextActive: { color: C.white },
   pipelineWarning: { fontSize: 11, color: C.gold, marginTop: 8, textAlign: 'center' },
 
-  dragonEntry: { alignItems: 'center', gap: 16, width: '100%' },
-  dragonEntryText: { fontSize: 14, color: C.textMid, textAlign: 'center', lineHeight: 20 },
-
   dragonBody: { padding: 20, flexGrow: 1 },
   dragonCenterBlock: { alignItems: 'center', gap: 16, marginTop: 24 },
   dragonBodyText: { fontSize: 14, color: C.textMid, textAlign: 'center', lineHeight: 20 },
-  dragonStatusText: { fontSize: 13, color: C.blueMid, fontWeight: '600' },
-  dragonReviewButton: { marginTop: 8 },
   dragonErrorText: { fontSize: 13, color: C.danger, textAlign: 'center', marginTop: 20, lineHeight: 18 },
   dragonWarningBox: {
     backgroundColor: C.goldLight, borderWidth: 1, borderColor: C.gold,

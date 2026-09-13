@@ -10,11 +10,19 @@ function getCredential() {
   return credential;
 }
 
-// Gets a bearer token for calling Dragon Copilot's Partner API (used for
-// both provisioning and retrieval calls, per Microsoft's sample code).
+// Gets a bearer token for calling Dragon Copilot's Partner API (DDE
+// subscriptions/retrieval, ambient-sessions).
 async function getDragonApiToken() {
   const token = await getCredential().getToken(config.dragonApiScope());
   return token.token;
 }
 
-module.exports = { getDragonApiToken };
+// Gets a bearer token for the Ambient Audio Streaming (AAS) service —
+// a different audience/resource than the Partner API above, confirmed
+// from Microsoft's AAS 2.0 reference docs.
+async function getAasToken() {
+  const token = await getCredential().getToken(config.aasScope());
+  return token.token;
+}
+
+module.exports = { getDragonApiToken, getAasToken };
