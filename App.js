@@ -21,6 +21,9 @@ const C = {
   blueBorder:  '#BFDBFE',
   gold:        '#F5A623',
   goldLight:   '#FEF3C7',
+  amberDark:   '#92400E',
+  success:     '#15803D',
+  successLight: '#DCFCE7',
   white:       '#FFFFFF',
   bg:          '#F4F7FF',
   textDark:    '#0B1F3A',
@@ -107,6 +110,41 @@ function parseDragonNote(noteBody) {
   }
 }
 
+// Dragon Copilot delivers the turn-by-turn transcript as a separate
+// artifact from the note (see Dragon Copilot APIs for partners docs), but
+// its exact field names haven't been confirmed against a real delivery
+// yet — this tries a few likely shapes and returns null (falling back to
+// raw JSON) if none match, the same pattern used for the note above.
+function parseDragonTranscript(transcriptBody) {
+  try {
+    const raw = transcriptBody?.data?.data;
+    if (typeof raw !== 'string') return null;
+    const payload = JSON.parse(raw);
+    const rawTurns = payload.turns || payload.transcript?.turns || payload.dialogue || payload.utterances;
+    if (!Array.isArray(rawTurns) || rawTurns.length === 0) return null;
+    const turns = rawTurns
+      .map((t, i) => ({
+        id: String(i),
+        speaker: t.speaker || t.role || t.participant || 'Speaker',
+        text: (t.text || t.content || t.utterance || '').replace(/\r\n/g, '\n').trim(),
+      }))
+      .filter((t) => t.text.length > 0);
+    return turns.length > 0 ? { turns } : null;
+  } catch {
+    return null;
+  }
+}
+
+// Finds the delivered artifact whose type name contains the given keyword
+// (e.g. "note" or "transcript") — Dragon Copilot's exact artifact_type
+// strings for each aren't documented, so this matches loosely rather than
+// relying on one exact confirmed value like "drc_native_note".
+function findArtifact(artifacts, keyword) {
+  if (!artifacts) return null;
+  const entry = Object.entries(artifacts).find(([type]) => type.toLowerCase().includes(keyword));
+  return entry ? entry[1] : null;
+}
+
 // ---------------------------------------------------------------------------
 // App
 // ---------------------------------------------------------------------------
@@ -139,11 +177,13 @@ export default function App() {
 
   // Dragon Copilot — backend submission state (the recording is uploaded
   // straight to Doctor Robbie's own server, which calls Dragon Copilot on
-  // the signed-in physician's behalf)
+  // the physician's behalf)
   const [dragonError, setDragonError] = useState('');
   const [dragonCorrelationId, setDragonCorrelationId] = useState(null);
   const [dragonDdeChecking, setDragonDdeChecking] = useState(false);
   const [dragonDdeResult, setDragonDdeResult] = useState(null);
+  const [dragonReady, setDragonReady] = useState(false);
+  const [noteTab, setNoteTab] = useState('note');
 
   const pulseAnim = useRef(new Animated.Value(1)).current;
   const timerRef = useRef(null);
@@ -154,6 +194,25 @@ export default function App() {
       setPermissionGranted(granted);
     })();
   }, []);
+
+  // Watches for Dragon Copilot's result to arrive in the background, purely
+  // to flip the status badge to "Ready" — it doesn't load the content, so
+  // the physician still decides when to tap "Check for Results".
+  useEffect(() => {
+    if (screen !== 'dragonNote' || !dragonCorrelationId || dragonReady) return;
+    let cancelled = false;
+    DdeClient.pollForResult(dragonCorrelationId)
+      .then(() => {
+        if (!cancelled) setDragonReady(true);
+      })
+      .catch(() => {
+        // Timed out without a result — the physician can still check
+        // manually with "Check for Results".
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [screen, dragonCorrelationId, dragonReady]);
 
   useEffect(() => {
     if (isRecording) {
@@ -275,6 +334,8 @@ export default function App() {
       const correlationId = await DragonCopilotBackend.submitRecording(audioUri, audioName, selectedPatient);
       setDragonCorrelationId(correlationId);
       setDragonDdeResult(null);
+      setDragonReady(false);
+      setNoteTab('note');
       setScreen('dragonNote');
     } catch (err) {
       Alert.alert('Dragon Copilot submission failed', String(err?.message ?? err));
@@ -300,6 +361,7 @@ export default function App() {
         return;
       }
       setDragonDdeResult(result);
+      setDragonReady(true);
     } catch (err) {
       setDragonError(String(err?.message ?? err));
     } finally {
@@ -335,9 +397,47 @@ export default function App() {
   // =========================================================================
   if (screen === 'dragonNote') {
     const missingKeys = DragonCopilotBackend.missingConfigKeys();
-    const noteBody = dragonDdeResult?.data ?? null;
+    const isReady = dragonReady || !!dragonDdeResult;
+    const artifacts = dragonDdeResult?.artifacts ?? null;
+    const noteBody = findArtifact(artifacts, 'note');
+    const transcriptBody = findArtifact(artifacts, 'transcript');
     const parsedNote = noteBody ? parseDragonNote(noteBody) : null;
-    const rawFallbackText = !parsedNote && noteBody ? JSON.stringify(noteBody, null, 2) : null;
+    const parsedTranscript = transcriptBody ? parseDragonTranscript(transcriptBody) : null;
+
+    function renderNoteTab() {
+      if (parsedNote) {
+        return (
+          <>
+            <Text style={styles.noteTitle}>{parsedNote.title}</Text>
+            {parsedNote.sections.map((section) => (
+              <View key={section.id} style={styles.noteSection}>
+                <Text style={styles.noteSectionTitle}>{section.title}</Text>
+                <Text style={styles.noteSectionContent} selectable>{section.content}</Text>
+              </View>
+            ))}
+          </>
+        );
+      }
+      if (noteBody) {
+        return <Text style={styles.summaryText} selectable>{JSON.stringify(noteBody, null, 2)}</Text>;
+      }
+      return <Text style={styles.dragonBodyText}>The note hasn't been delivered yet.</Text>;
+    }
+
+    function renderTranscriptTab() {
+      if (parsedTranscript) {
+        return parsedTranscript.turns.map((turn) => (
+          <View key={turn.id} style={styles.noteSection}>
+            <Text style={styles.noteSectionTitle}>{turn.speaker}</Text>
+            <Text style={styles.noteSectionContent} selectable>{turn.text}</Text>
+          </View>
+        ));
+      }
+      if (transcriptBody) {
+        return <Text style={styles.summaryText} selectable>{JSON.stringify(transcriptBody, null, 2)}</Text>;
+      }
+      return <Text style={styles.dragonBodyText}>The transcript hasn't been delivered yet.</Text>;
+    }
 
     return (
       <SafeAreaView style={styles.safeArea}>
@@ -347,25 +447,35 @@ export default function App() {
             <Text style={styles.backButtonText}>‹ Back</Text>
           </TouchableOpacity>
           <Text style={styles.tsTitle}>Dragon Copilot</Text>
-          <View style={{ width: 80 }} />
+          <View style={[styles.noteStatusBadge, isReady ? styles.noteStatusBadgeReady : styles.noteStatusBadgeSubmitted]}>
+            <Text style={[styles.noteStatusBadgeText, isReady ? styles.noteStatusBadgeTextReady : styles.noteStatusBadgeTextSubmitted]}>
+              {isReady ? 'Ready' : 'Submitted'}
+            </Text>
+          </View>
         </View>
 
-        {parsedNote || rawFallbackText ? (
+        {artifacts ? (
           <>
+            <View style={styles.noteTabRow}>
+              <TouchableOpacity
+                style={[styles.noteTabButton, noteTab === 'note' && styles.noteTabButtonActive]}
+                onPress={() => setNoteTab('note')}
+              >
+                <Text style={[styles.noteTabButtonText, noteTab === 'note' && styles.noteTabButtonTextActive]}>
+                  Note
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.noteTabButton, noteTab === 'transcript' && styles.noteTabButtonActive]}
+                onPress={() => setNoteTab('transcript')}
+              >
+                <Text style={[styles.noteTabButtonText, noteTab === 'transcript' && styles.noteTabButtonTextActive]}>
+                  Transcript
+                </Text>
+              </TouchableOpacity>
+            </View>
             <ScrollView contentContainerStyle={styles.summaryBody}>
-              {parsedNote ? (
-                <>
-                  <Text style={styles.noteTitle}>{parsedNote.title}</Text>
-                  {parsedNote.sections.map((section) => (
-                    <View key={section.id} style={styles.noteSection}>
-                      <Text style={styles.noteSectionTitle}>{section.title}</Text>
-                      <Text style={styles.noteSectionContent} selectable>{section.content}</Text>
-                    </View>
-                  ))}
-                </>
-              ) : (
-                <Text style={styles.summaryText} selectable>{rawFallbackText}</Text>
-              )}
+              {noteTab === 'note' ? renderNoteTab() : renderTranscriptTab()}
             </ScrollView>
             <View style={styles.tsFooter}>
               <TouchableOpacity
@@ -376,6 +486,8 @@ export default function App() {
                   setAudioName(null);
                   setDragonCorrelationId(null);
                   setDragonDdeResult(null);
+                  setDragonReady(false);
+                  setNoteTab('note');
                   setDuration(0);
                 }}
               >
@@ -410,7 +522,7 @@ export default function App() {
                       <Text style={[styles.primaryButtonText, { marginLeft: 10 }]}>Checking…</Text>
                     </View>
                   ) : (
-                    <Text style={styles.primaryButtonText}>Check for Note</Text>
+                    <Text style={styles.primaryButtonText}>Check for Results</Text>
                   )}
                 </TouchableOpacity>
                 {!!dragonError && <Text style={styles.dragonErrorText}>{dragonError}</Text>}
@@ -750,6 +862,27 @@ const styles = StyleSheet.create({
   backButton: { width: 80 },
   backButtonText: { color: C.gold, fontSize: 16, fontWeight: '600' },
   tsTitle: { fontSize: 17, fontWeight: '700', color: C.blue },
+  noteStatusBadge: {
+    minWidth: 80, alignItems: 'center', paddingVertical: 4, paddingHorizontal: 10,
+    borderRadius: 6, borderWidth: 1,
+  },
+  noteStatusBadgeSubmitted: { backgroundColor: C.goldLight, borderColor: C.gold },
+  noteStatusBadgeReady: { backgroundColor: C.successLight, borderColor: C.success },
+  noteStatusBadgeText: { fontSize: 11, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.5 },
+  noteStatusBadgeTextSubmitted: { color: C.amberDark },
+  noteStatusBadgeTextReady: { color: C.success },
+  noteTabRow: {
+    flexDirection: 'row', backgroundColor: C.blueLight, borderRadius: 10,
+    padding: 3, borderWidth: 1, borderColor: C.blueBorder,
+    marginHorizontal: 16, marginTop: 12,
+  },
+  noteTabButton: { flex: 1, paddingVertical: 8, borderRadius: 8, alignItems: 'center' },
+  noteTabButtonActive: {
+    backgroundColor: C.blue,
+    shadowColor: C.blue, shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.3, shadowRadius: 4, elevation: 2,
+  },
+  noteTabButtonText: { fontSize: 13, fontWeight: '600', color: C.blueMid },
+  noteTabButtonTextActive: { color: C.white },
   tsFooter: {
     padding: 20, paddingTop: 12, borderTopWidth: 1, borderTopColor: C.border, backgroundColor: C.bg, gap: 12,
   },

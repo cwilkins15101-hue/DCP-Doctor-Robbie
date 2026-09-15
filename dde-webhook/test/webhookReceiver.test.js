@@ -12,12 +12,12 @@ process.env.AzureWebJobsStorage = 'UseDevelopmentStorage=true';
 // function under test, so its destructured references pick up the stubs.
 const storage = require('../src/lib/storage');
 const savedResults = [];
-storage.saveResult = async (correlationId, payload) => {
-  savedResults.push({ correlationId, payload });
+storage.saveResult = async (correlationId, artifactType, payload) => {
+  savedResults.push({ correlationId, artifactType, payload });
 };
-storage.getResult = async (correlationId) => {
+storage.getResults = async (correlationId) => {
   if (correlationId === 'known-id') {
-    return { data: { some: 'stored data' }, storedAt: '2026-01-01T00:00:00Z' };
+    return { drc_native_note: { data: { some: 'stored data' }, storedAt: '2026-01-01T00:00:00Z' } };
   }
   return null;
 };
@@ -123,8 +123,31 @@ test('POST with recognized event type retrieves and stores the data', async () =
   assert.equal(res.status, 200);
   assert.equal(savedResults.length, 1);
   assert.equal(savedResults[0].correlationId, 'corr-1');
+  assert.equal(savedResults[0].artifactType, 'unknown');
   assert.deepEqual(savedResults[0].payload.data, { transcript: 'hello world' });
   assert.equal(savedResults[0].payload.customerId, 'cust-1');
+});
+
+test('POST with a note artifact stores it under its artifact_type', async () => {
+  savedResults.length = 0;
+  global.fetch = async () => ({
+    ok: true,
+    json: async () => ({ data: JSON.stringify({ artifact_type: 'drc_native_note', resources: [] }) }),
+  });
+  const res = await webhookHandler(
+    fakeRequest({
+      query: { access_token: 'test-webhook-secret' },
+      body: JSON.stringify({
+        specversion: '1.0',
+        type: 'encounter_data_ready_complete',
+        data: { retrievalUrl: 'https://example.com/retrieval/123', correlationId: 'corr-2' },
+      }),
+    }),
+    noopContext
+  );
+  assert.equal(res.status, 200);
+  assert.equal(savedResults.length, 1);
+  assert.equal(savedResults[0].artifactType, 'drc_native_note');
 });
 
 test('getResult OPTIONS preflight returns 204 with CORS headers', async () => {
@@ -175,7 +198,9 @@ test('getResult returns 200 with data for a known correlationId', async () => {
   );
   assert.equal(res.status, 200);
   assert.equal(res.jsonBody.status, 'ready');
-  assert.deepEqual(res.jsonBody.data, { some: 'stored data' });
+  assert.deepEqual(res.jsonBody.artifacts, {
+    drc_native_note: { data: { some: 'stored data' }, storedAt: '2026-01-01T00:00:00Z' },
+  });
 });
 
 test.after(() => {

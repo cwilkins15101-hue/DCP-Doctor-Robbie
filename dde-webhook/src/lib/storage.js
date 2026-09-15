@@ -21,17 +21,26 @@ async function getTableClient() {
   return tableClientPromise;
 }
 
-// Table Storage needs a partitionKey + rowKey. correlationId is unique
-// enough to be the rowKey; a fixed partitionKey keeps this simple since
-// Doctor Robbie's volume doesn't need partition-based scaling.
+// Table Storage needs a partitionKey + rowKey. A fixed partitionKey keeps
+// this simple since Doctor Robbie's volume doesn't need partition-based
+// scaling. Dragon Copilot delivers a recording's transcript and note as
+// separate artifacts (see Dragon Copilot APIs for partners docs), so the
+// rowKey includes the artifact type — a plain correlationId rowKey would
+// let a later delivery silently overwrite an earlier one.
 const PARTITION_KEY = 'session';
 
-async function saveResult(correlationId, payload) {
+function rowKeyFor(correlationId, artifactType) {
+  return `${correlationId}::${artifactType}`;
+}
+
+async function saveResult(correlationId, artifactType, payload) {
   const client = await getTableClient();
   await client.upsertEntity(
     {
       partitionKey: PARTITION_KEY,
-      rowKey: correlationId,
+      rowKey: rowKeyFor(correlationId, artifactType),
+      correlationId,
+      artifactType,
       dataJson: JSON.stringify(payload),
       storedAt: new Date().toISOString(),
     },
@@ -39,15 +48,18 @@ async function saveResult(correlationId, payload) {
   );
 }
 
-async function getResult(correlationId) {
+// Returns a map of artifactType -> { data, storedAt } for every artifact
+// received so far for this correlationId, or null if none have arrived yet.
+async function getResults(correlationId) {
   const client = await getTableClient();
-  try {
-    const entity = await client.getEntity(PARTITION_KEY, correlationId);
-    return { data: JSON.parse(entity.dataJson), storedAt: entity.storedAt };
-  } catch (err) {
-    if (err.statusCode === 404) return null;
-    throw err;
+  const entities = client.listEntities({
+    queryOptions: { filter: `PartitionKey eq '${PARTITION_KEY}' and correlationId eq '${correlationId}'` },
+  });
+  const results = {};
+  for await (const entity of entities) {
+    results[entity.artifactType] = { data: JSON.parse(entity.dataJson), storedAt: entity.storedAt };
   }
+  return Object.keys(results).length > 0 ? results : null;
 }
 
-module.exports = { saveResult, getResult };
+module.exports = { saveResult, getResults };
