@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import {
   StyleSheet, Text, View, TouchableOpacity, Animated,
   Alert, Modal, FlatList, SafeAreaView, ScrollView,
-  TextInput, ActivityIndicator, KeyboardAvoidingView, Platform,
+  ActivityIndicator, Platform,
 } from 'react-native';
 import { Audio } from 'expo-av';
 import * as DocumentPicker from 'expo-document-picker';
@@ -10,18 +10,6 @@ import { StatusBar } from 'expo-status-bar';
 import { Ionicons } from '@expo/vector-icons';
 import { DragonCopilotBackend } from './dragonCopilotBackend';
 import { DdeClient } from './ddeClient';
-
-const OPENAI_API_KEY = process.env.EXPO_PUBLIC_OPENAI_API_KEY;
-const ANTHROPIC_API_KEY = process.env.EXPO_PUBLIC_ANTHROPIC_API_KEY;
-
-// ---------------------------------------------------------------------------
-// AI pipeline selection — which service labels speakers and writes the
-// clinical summary. Transcription always uses Whisper either way.
-// ---------------------------------------------------------------------------
-const PIPELINES = { CLAUDE: 'claude', DRAGON: 'dragon' };
-const PIPELINE_LABELS = { [PIPELINES.CLAUDE]: 'Claude', [PIPELINES.DRAGON]: 'Dragon Copilot' };
-// Shorter labels for the small header badge, which has limited width.
-const PIPELINE_BADGE_LABELS = { [PIPELINES.CLAUDE]: 'Claude', [PIPELINES.DRAGON]: 'Dragon' };
 
 // ---------------------------------------------------------------------------
 // Color tokens — Blue & Gold
@@ -94,183 +82,37 @@ function parseCSV(text) {
 }
 
 // ---------------------------------------------------------------------------
-// Whisper transcription
+// Dragon standard payload — the note itself lives at data.data as a JSON
+// string (confirmed from a real webhook delivery); resources[] holds the
+// note's sections, each with a display name and text (often empty for
+// sections the encounter didn't cover). Returns null if the shape doesn't
+// match, so callers can fall back to showing the raw JSON.
 // ---------------------------------------------------------------------------
-async function transcribeWithWhisper(uri, filename) {
-  const ext = (filename ?? 'audio.m4a').split('.').pop().toLowerCase();
-  const mimeMap = { m4a: 'audio/m4a', mp3: 'audio/mpeg', mp4: 'audio/mp4', wav: 'audio/wav', webm: 'audio/webm' };
-  const mimeType = mimeMap[ext] ?? 'audio/m4a';
-
-  const formData = new FormData();
-
-  if (Platform.OS === 'web') {
-    // On web, fetch the file as a Blob — the { uri, name, type } shorthand only works on native
-    const fileRes = await fetch(uri);
-    const blob = await fileRes.blob();
-    formData.append('file', blob, filename ?? 'audio.m4a');
-  } else {
-    formData.append('file', { uri, name: filename ?? 'audio.m4a', type: mimeType });
-  }
-
-  formData.append('model', 'whisper-1');
-
-  const response = await fetch('https://api.openai.com/v1/audio/transcriptions', {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${OPENAI_API_KEY}` },
-    body: formData,
-  });
-
-  const rawText = await response.text();
-  console.log('Whisper raw response:', rawText);
-
-  if (!response.ok) {
-    throw new Error(`Whisper API error ${response.status}: ${rawText}`);
-  }
-
-  // Response may be plain text or JSON depending on response_format
+function parseDragonNote(noteBody) {
   try {
-    const json = JSON.parse(rawText);
-    return json.text ?? rawText;
+    const raw = noteBody?.data?.data;
+    if (typeof raw !== 'string') return null;
+    const payload = JSON.parse(raw);
+    const sections = (payload.resources || [])
+      .map((r) => ({
+        id: r.legacy_id,
+        title: r.context?.display_description || r.legacy_id,
+        content: (r.content || '').replace(/\r\n/g, '\n').trim(),
+      }))
+      .filter((s) => s.content.length > 0);
+    if (sections.length === 0) return null;
+    return { title: payload.document?.title || 'Clinical Note', sections };
   } catch {
-    return rawText;
+    return null;
   }
 }
-
-// ---------------------------------------------------------------------------
-// Claude — speaker identification
-// ---------------------------------------------------------------------------
-async function identifySpeakersClaude(transcript) {
-  const response = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-api-key': ANTHROPIC_API_KEY,
-      'anthropic-version': '2023-06-01',
-      'anthropic-dangerous-direct-browser-access': 'true',
-    },
-    body: JSON.stringify({
-      model: 'claude-sonnet-4-6',
-      max_tokens: 2048,
-      messages: [{
-        role: 'user',
-        content: `You are a medical transcription assistant. The following is a raw transcript of a medical appointment. Identify the different speakers and reformat the transcript with clear speaker labels on each line.
-
-Rules:
-- Use "Doctor:" and "Patient:" as labels when identifiable
-- If other speakers are present (nurse, family member), label them accordingly
-- If a speaker is unclear, use "Speaker:"
-- Preserve the original wording exactly — do not paraphrase or summarize
-- Output only the labeled transcript, nothing else
-
-TRANSCRIPT:
-${transcript}`,
-      }],
-    }),
-  });
-
-  const rawText = await response.text();
-  if (!response.ok) throw new Error(`Speaker ID error ${response.status}: ${rawText}`);
-  const json = JSON.parse(rawText);
-  return json.content?.[0]?.text ?? transcript;
-}
-
-// ---------------------------------------------------------------------------
-// Claude clinical summary
-// ---------------------------------------------------------------------------
-async function generateClinicalSummaryClaude(transcript, patient) {
-  const patientContext = patient
-    ? `Patient: ${patient['Patient Name'] ?? 'Unknown'}
-MRN: ${patient['MRN'] ?? 'N/A'}
-DOB: ${patient['DOB'] ?? 'N/A'}
-Visit Date: ${patient['Visit Date'] ?? 'N/A'}  ${patient['Visit Time'] ?? ''}
-Chief Complaint: ${patient['Chief Complaint'] ?? 'N/A'}`
-    : 'No patient selected.';
-
-  const prompt = `You are a clinical documentation assistant. Below is a patient encounter transcript and patient details. Generate a structured clinical note in SOAP format.
-
-${patientContext}
-
-TRANSCRIPT:
-${transcript}
-
-Generate a SOAP note using markdown formatting:
-- Use ## for each section heading (## Subjective, ## Objective, ## Assessment, ## Plan)
-- Use **bold** for key clinical terms, medications, and diagnoses
-- Be concise and use standard clinical language
-- Only include information present in the transcript`;
-
-  const response = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-api-key': ANTHROPIC_API_KEY,
-      'anthropic-version': '2023-06-01',
-      'anthropic-dangerous-direct-browser-access': 'true',
-    },
-    body: JSON.stringify({
-      model: 'claude-sonnet-4-6',
-      max_tokens: 1024,
-      messages: [{ role: 'user', content: prompt }],
-    }),
-  });
-
-  const rawText = await response.text();
-  console.log('Claude raw response:', rawText);
-
-  if (!response.ok) {
-    throw new Error(`Claude API error ${response.status}: ${rawText}`);
-  }
-
-  const json = JSON.parse(rawText);
-  return json.content?.[0]?.text ?? '';
-}
-
-// ---------------------------------------------------------------------------
-// MarkdownText — renders **bold** and ## Section Headers
-// ---------------------------------------------------------------------------
-function MarkdownText({ text, baseStyle }) {
-  if (!text) return null;
-  const lines = text.split('\n');
-  return (
-    <View>
-      {lines.map((line, i) => {
-        const isHeader = line.startsWith('## ');
-        const content = isHeader ? line.slice(3) : line;
-        const parts = content.split(/\*\*(.*?)\*\*/g);
-        return (
-          <Text
-            key={i}
-            style={[baseStyle, isHeader ? mdStyles.header : mdStyles.body, i > 0 && mdStyles.lineSpacing]}
-            selectable
-          >
-            {parts.map((part, j) =>
-              j % 2 === 1
-                ? <Text key={j} style={mdStyles.bold}>{part}</Text>
-                : part
-            )}
-          </Text>
-        );
-      })}
-    </View>
-  );
-}
-
-const mdStyles = StyleSheet.create({
-  header: { fontSize: 16, fontWeight: '700', color: C.blue, marginTop: 16, marginBottom: 4 },
-  body:   { fontSize: 15, color: C.textDark, lineHeight: 24 },
-  bold:   { fontWeight: '700', color: C.textDark },
-  lineSpacing: { marginTop: 2 },
-});
 
 // ---------------------------------------------------------------------------
 // App
 // ---------------------------------------------------------------------------
 export default function App() {
-  // Screen: 'record' | 'transcript' | 'summary'
+  // Screen: 'record' | 'dragonNote'
   const [screen, setScreen] = useState('record');
-
-  // AI pipeline: 'claude' | 'dragon'
-  const [pipeline, setPipeline] = useState(PIPELINES.CLAUDE);
 
   // Permissions
   const [permissionGranted, setPermissionGranted] = useState(false);
@@ -287,27 +129,17 @@ export default function App() {
   const [selectedPatient, setSelectedPatient] = useState(null);
   const [patientModalVisible, setPatientModalVisible] = useState(false);
 
-  // Transcription
-  const [transcribing, setTranscribing] = useState(false);
-  const [transcribeStep, setTranscribeStep] = useState('');
-  const [transcript, setTranscript] = useState('');
-
-  // Summary
-  const [summarizing, setSummarizing] = useState(false);
-  const [summary, setSummary] = useState('');
-
-  // Audio playback
-  const [sound, setSound] = useState(null);
-  const [isPlaying, setIsPlaying] = useState(false);
-  const [playbackPos, setPlaybackPos] = useState(0);
-  const [playbackDur, setPlaybackDur] = useState(0);
+  // Dragon Copilot submission
+  const [submitting, setSubmitting] = useState(false);
+  const [submitStep, setSubmitStep] = useState('');
 
   // Debug log
   const logData = useDebugLog();
   const [logModalVisible, setLogModalVisible] = useState(false);
 
-  // Dragon Copilot — backend submission state (no sign-in, no SDK: the
-  // recording is uploaded straight to Doctor Robbie's own server)
+  // Dragon Copilot — backend submission state (the recording is uploaded
+  // straight to Doctor Robbie's own server, which calls Dragon Copilot on
+  // the signed-in physician's behalf)
   const [dragonError, setDragonError] = useState('');
   const [dragonCorrelationId, setDragonCorrelationId] = useState(null);
   const [dragonDdeChecking, setDragonDdeChecking] = useState(false);
@@ -433,110 +265,12 @@ export default function App() {
     setDuration(0);
   }
 
-  // ---- Audio playback ----
-
-  async function togglePlayback() {
-    try {
-      if (sound) {
-        if (isPlaying) {
-          await sound.pauseAsync();
-        } else {
-          await sound.playAsync();
-        }
-        return;
-      }
-
-      await Audio.setAudioModeAsync({ allowsRecordingIOS: false, playsInSilentModeIOS: true });
-      const { sound: newSound } = await Audio.Sound.createAsync(
-        { uri: audioUri },
-        { shouldPlay: true },
-        (status) => {
-          if (status.isLoaded) {
-            setIsPlaying(status.isPlaying);
-            setPlaybackPos(status.positionMillis ?? 0);
-            setPlaybackDur(status.durationMillis ?? 0);
-            if (status.didJustFinish) {
-              setIsPlaying(false);
-              setPlaybackPos(0);
-            }
-          }
-        }
-      );
-      setSound(newSound);
-      setIsPlaying(true);
-    } catch (err) {
-      Alert.alert('Playback error', String(err));
-    }
-  }
-
-  async function stopPlayback() {
-    if (sound) {
-      await sound.unloadAsync();
-      setSound(null);
-      setIsPlaying(false);
-      setPlaybackPos(0);
-      setPlaybackDur(0);
-    }
-  }
-
-  function formatMs(ms) {
-    const totalSec = Math.floor(ms / 1000);
-    const m = Math.floor(totalSec / 60).toString().padStart(2, '0');
-    const s = (totalSec % 60).toString().padStart(2, '0');
-    return `${m}:${s}`;
-  }
-
-  // ---- Transcription ----
-
-  async function handleTranscribe() {
-    if (!OPENAI_API_KEY) {
-      Alert.alert('Missing API key', 'Add EXPO_PUBLIC_OPENAI_API_KEY to your .env file.');
-      return;
-    }
-    setTranscribing(true);
-    try {
-      setTranscribeStep('Transcribing audio…');
-      const rawText = await transcribeWithWhisper(audioUri, audioName);
-      console.log('Whisper result length:', rawText?.length);
-
-      setTranscribeStep('Identifying speakers…');
-      const labeled = await identifySpeakersClaude(rawText);
-
-      setTranscript(labeled);
-      setScreen('transcript');
-    } catch (err) {
-      Alert.alert('Transcription failed', String(err));
-    } finally {
-      setTranscribing(false);
-      setTranscribeStep('');
-    }
-  }
-
-  // ---- Summary ----
-
-  async function handleGenerateSummary() {
-    if (!ANTHROPIC_API_KEY) {
-      Alert.alert('Missing API key', 'Add EXPO_PUBLIC_ANTHROPIC_API_KEY to your .env file.');
-      return;
-    }
-    setSummarizing(true);
-    try {
-      const text = await generateClinicalSummaryClaude(transcript, selectedPatient);
-      setSummary(text);
-      setScreen('summary');
-    } catch (err) {
-      Alert.alert('Summary failed', String(err));
-    } finally {
-      setSummarizing(false);
-    }
-  }
-
-  // ---- Dragon Copilot — plain backend upload, no sign-in, no popup ----
+  // ---- Dragon Copilot submission ----
 
   async function handleDragonSubmitRecording() {
     setDragonError('');
-    setTranscribing(true);
-    setTranscribeStep('Sending to Dragon Copilot…');
+    setSubmitting(true);
+    setSubmitStep('Sending to Dragon Copilot…');
     try {
       const correlationId = await DragonCopilotBackend.submitRecording(audioUri, audioName, selectedPatient);
       setDragonCorrelationId(correlationId);
@@ -545,8 +279,8 @@ export default function App() {
     } catch (err) {
       Alert.alert('Dragon Copilot submission failed', String(err?.message ?? err));
     } finally {
-      setTranscribing(false);
-      setTranscribeStep('');
+      setSubmitting(false);
+      setSubmitStep('');
     }
   }
 
@@ -595,103 +329,15 @@ export default function App() {
   }
 
   // =========================================================================
-  // Transcript screen
-  // =========================================================================
-  if (screen === 'transcript') {
-    return (
-      <SafeAreaView style={styles.safeArea}>
-        <StatusBar style="auto" />
-        <KeyboardAvoidingView
-          style={{ flex: 1 }}
-          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-        >
-          {/* Header */}
-          <View style={styles.tsHeader}>
-            <TouchableOpacity onPress={() => { stopPlayback(); setScreen('record'); }} style={styles.backButton}>
-              <Text style={styles.backButtonText}>‹ Back</Text>
-            </TouchableOpacity>
-            <Text style={styles.tsTitle}>Transcript</Text>
-            <Text style={styles.tsPipelineBadge} numberOfLines={1}>{PIPELINE_BADGE_LABELS[pipeline]}</Text>
-          </View>
-
-          {/* Patient strip */}
-          {selectedPatient && (
-            <View style={styles.tsPatientStrip}>
-              <Text style={styles.tsPatientName}>{patientDisplayName(selectedPatient)}</Text>
-              {patientSubtitle(selectedPatient) ? (
-                <Text style={styles.tsPatientSub}>{patientSubtitle(selectedPatient)}</Text>
-              ) : null}
-            </View>
-          )}
-
-          <ScrollView contentContainerStyle={styles.tsBody} keyboardShouldPersistTaps="handled">
-            <Text style={styles.tsLabel}>Review and edit the transcript before generating the clinical summary.</Text>
-            <TextInput
-              style={styles.tsInput}
-              value={transcript}
-              onChangeText={setTranscript}
-              multiline
-              textAlignVertical="top"
-              placeholder="Transcript will appear here…"
-              placeholderTextColor="#94A3B8"
-            />
-          </ScrollView>
-
-          <View style={styles.tsFooter}>
-            {/* Audio playback bar */}
-            {audioUri && (
-              <View style={styles.playbackBar}>
-                <TouchableOpacity onPress={togglePlayback} style={styles.playbackBtn}>
-                  <Ionicons name={isPlaying ? 'pause-circle' : 'play-circle'} size={36} color={C.blue} />
-                </TouchableOpacity>
-                <View style={styles.playbackInfo}>
-                  <Text style={styles.playbackLabel}>Listen to Encounter</Text>
-                  <View style={styles.progressTrack}>
-                    <View style={[
-                      styles.progressFill,
-                      { width: playbackDur > 0 ? `${(playbackPos / playbackDur) * 100}%` : '0%' }
-                    ]} />
-                  </View>
-                  <Text style={styles.playbackTime}>
-                    {formatMs(playbackPos)}{playbackDur > 0 ? ` / ${formatMs(playbackDur)}` : ''}
-                  </Text>
-                </View>
-              </View>
-            )}
-
-            <TouchableOpacity
-              style={[styles.primaryButton, (!transcript.trim() || summarizing) && styles.buttonDisabled]}
-              disabled={!transcript.trim() || summarizing}
-              onPress={handleGenerateSummary}
-            >
-              {summarizing ? (
-                <View style={styles.loadingRow}>
-                  <ActivityIndicator color="#fff" size="small" />
-                  <Text style={[styles.primaryButtonText, { marginLeft: 10 }]}>Generating…</Text>
-                </View>
-              ) : (
-                <Text style={styles.primaryButtonText}>Generate Clinical Summary</Text>
-              )}
-            </TouchableOpacity>
-          </View>
-        </KeyboardAvoidingView>
-      </SafeAreaView>
-    );
-  }
-
-  // =========================================================================
   // Dragon Copilot screen — shown right after a recording is sent. Shows a
   // "processing" state with a manual check, then the note once Dragon Data
-  // Exchange (our own webhook server) delivers it. The exact shape of that
-  // data ("Dragon standard payload") is still being confirmed, so this
-  // renders common field names if present and falls back to raw JSON.
+  // Exchange (our own webhook server) delivers it.
   // =========================================================================
   if (screen === 'dragonNote') {
     const missingKeys = DragonCopilotBackend.missingConfigKeys();
     const noteBody = dragonDdeResult?.data ?? null;
-    const displayText = noteBody
-      ? (noteBody.transcript ?? noteBody.note ?? noteBody.text ?? JSON.stringify(noteBody, null, 2))
-      : null;
+    const parsedNote = noteBody ? parseDragonNote(noteBody) : null;
+    const rawFallbackText = !parsedNote && noteBody ? JSON.stringify(noteBody, null, 2) : null;
 
     return (
       <SafeAreaView style={styles.safeArea}>
@@ -704,10 +350,22 @@ export default function App() {
           <View style={{ width: 80 }} />
         </View>
 
-        {displayText ? (
+        {parsedNote || rawFallbackText ? (
           <>
             <ScrollView contentContainerStyle={styles.summaryBody}>
-              <Text style={styles.summaryText} selectable>{displayText}</Text>
+              {parsedNote ? (
+                <>
+                  <Text style={styles.noteTitle}>{parsedNote.title}</Text>
+                  {parsedNote.sections.map((section) => (
+                    <View key={section.id} style={styles.noteSection}>
+                      <Text style={styles.noteSectionTitle}>{section.title}</Text>
+                      <Text style={styles.noteSectionContent} selectable>{section.content}</Text>
+                    </View>
+                  ))}
+                </>
+              ) : (
+                <Text style={styles.summaryText} selectable>{rawFallbackText}</Text>
+              )}
             </ScrollView>
             <View style={styles.tsFooter}>
               <TouchableOpacity
@@ -765,53 +423,6 @@ export default function App() {
   }
 
   // =========================================================================
-  // Summary screen
-  // =========================================================================
-  if (screen === 'summary') {
-    return (
-      <SafeAreaView style={styles.safeArea}>
-        <StatusBar style="auto" />
-        <View style={styles.tsHeader}>
-          <TouchableOpacity onPress={() => setScreen('transcript')} style={styles.backButton}>
-            <Text style={styles.backButtonText}>‹ Transcript</Text>
-          </TouchableOpacity>
-          <Text style={styles.tsTitle}>Clinical Summary</Text>
-          <Text style={styles.tsPipelineBadge}>{PIPELINE_LABELS[pipeline]}</Text>
-        </View>
-
-        {selectedPatient && (
-          <View style={styles.tsPatientStrip}>
-            <Text style={styles.tsPatientName}>{patientDisplayName(selectedPatient)}</Text>
-            {patientSubtitle(selectedPatient) ? (
-              <Text style={styles.tsPatientSub}>{patientSubtitle(selectedPatient)}</Text>
-            ) : null}
-          </View>
-        )}
-
-        <ScrollView contentContainerStyle={styles.summaryBody}>
-          <MarkdownText text={summary} baseStyle={styles.summaryText} />
-        </ScrollView>
-
-        <View style={styles.tsFooter}>
-          <TouchableOpacity
-            style={styles.primaryButton}
-            onPress={() => {
-              setScreen('record');
-              setAudioUri(null);
-              setAudioName(null);
-              setTranscript('');
-              setSummary('');
-              setDuration(0);
-            }}
-          >
-            <Text style={styles.primaryButtonText}>New Encounter</Text>
-          </TouchableOpacity>
-        </View>
-      </SafeAreaView>
-    );
-  }
-
-  // =========================================================================
   // Record screen (default)
   // =========================================================================
   if (!permissionGranted) {
@@ -837,33 +448,9 @@ export default function App() {
           <Text style={styles.debugLinkText}>View Log</Text>
         </TouchableOpacity>
 
-        {/* AI pipeline toggle */}
-        <View style={styles.pipelineBlock}>
-          <Text style={styles.pipelineLabel}>AI Pipeline</Text>
-          <View style={styles.pipelineToggle}>
-            <TouchableOpacity
-              style={[styles.pipelineOption, pipeline === PIPELINES.CLAUDE && styles.pipelineOptionActive]}
-              onPress={() => setPipeline(PIPELINES.CLAUDE)}
-            >
-              <Text style={[styles.pipelineOptionText, pipeline === PIPELINES.CLAUDE && styles.pipelineOptionTextActive]}>
-                Claude
-              </Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[styles.pipelineOption, pipeline === PIPELINES.DRAGON && styles.pipelineOptionActive]}
-              onPress={() => setPipeline(PIPELINES.DRAGON)}
-            >
-              <Text style={[styles.pipelineOptionText, pipeline === PIPELINES.DRAGON && styles.pipelineOptionTextActive]}>
-                Dragon Copilot
-              </Text>
-            </TouchableOpacity>
-          </View>
-          {pipeline === PIPELINES.DRAGON && (
-            <Text style={styles.pipelineWarning}>
-              Recordings are sent to Dragon Copilot for processing — no transcript review step.
-            </Text>
-          )}
-        </View>
+        <Text style={styles.pipelineWarning}>
+          Recordings are sent to Dragon Copilot for processing — no transcript review step.
+        </Text>
 
         {/* Patient banner */}
         {selectedPatient ? (
@@ -932,24 +519,22 @@ export default function App() {
                   {audioName ?? 'Recording'}{duration > 0 ? ` (${formatDuration(duration)})` : ''}
                 </Text>
                 <TouchableOpacity
-                  style={[styles.primaryButton, transcribing && styles.buttonDisabled]}
-                  onPress={pipeline === PIPELINES.DRAGON ? handleDragonSubmitRecording : handleTranscribe}
-                  disabled={transcribing}
+                  style={[styles.primaryButton, submitting && styles.buttonDisabled]}
+                  onPress={handleDragonSubmitRecording}
+                  disabled={submitting}
                 >
-                  {transcribing ? (
+                  {submitting ? (
                     <View style={styles.loadingRow}>
                       <ActivityIndicator color="#fff" size="small" />
                       <Text style={[styles.primaryButtonText, { marginLeft: 10 }]}>
-                        {transcribeStep || 'Working…'}
+                        {submitStep || 'Working…'}
                       </Text>
                     </View>
                   ) : (
-                    <Text style={styles.primaryButtonText}>
-                      {pipeline === PIPELINES.DRAGON ? 'Send to Dragon Copilot' : 'Transcribe & Summarize'}
-                    </Text>
+                    <Text style={styles.primaryButtonText}>Send to Dragon Copilot</Text>
                   )}
                 </TouchableOpacity>
-                <TouchableOpacity style={styles.secondaryButton} onPress={handleDiscard} disabled={transcribing}>
+                <TouchableOpacity style={styles.secondaryButton} onPress={handleDiscard} disabled={submitting}>
                   <Text style={styles.secondaryButtonText}>Discard</Text>
                 </TouchableOpacity>
               </View>
@@ -1050,23 +635,7 @@ const styles = StyleSheet.create({
   title: { fontSize: 30, fontWeight: '800', color: C.blue, letterSpacing: 0.5, marginBottom: 2 },
   subtitle: { fontSize: 13, color: C.textMid, marginBottom: 20, letterSpacing: 0.3 },
 
-  pipelineBlock: { alignItems: 'center', marginBottom: 20, width: '100%' },
-  pipelineLabel: {
-    fontSize: 10, color: C.textLight, fontWeight: '700',
-    textTransform: 'uppercase', letterSpacing: 1, marginBottom: 6,
-  },
-  pipelineToggle: {
-    flexDirection: 'row', backgroundColor: C.blueLight, borderRadius: 10,
-    padding: 3, borderWidth: 1, borderColor: C.blueBorder,
-  },
-  pipelineOption: { paddingVertical: 8, paddingHorizontal: 18, borderRadius: 8 },
-  pipelineOptionActive: {
-    backgroundColor: C.blue,
-    shadowColor: C.blue, shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.3, shadowRadius: 4, elevation: 2,
-  },
-  pipelineOptionText: { fontSize: 13, fontWeight: '600', color: C.blueMid },
-  pipelineOptionTextActive: { color: C.white },
-  pipelineWarning: { fontSize: 11, color: C.gold, marginTop: 8, textAlign: 'center' },
+  pipelineWarning: { fontSize: 11, color: C.gold, marginTop: 8, marginBottom: 20, textAlign: 'center' },
 
   dragonBody: { padding: 20, flexGrow: 1 },
   dragonCenterBlock: { alignItems: 'center', gap: 16, marginTop: 24 },
@@ -1172,7 +741,7 @@ const styles = StyleSheet.create({
   logLevelWarn: { color: C.gold },
   logLevelError: { color: C.danger },
 
-  // Transcript & Summary screens
+  // Dragon Copilot note screen
   tsHeader: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
     paddingHorizontal: 16, paddingVertical: 12,
@@ -1181,38 +750,20 @@ const styles = StyleSheet.create({
   backButton: { width: 80 },
   backButtonText: { color: C.gold, fontSize: 16, fontWeight: '600' },
   tsTitle: { fontSize: 17, fontWeight: '700', color: C.blue },
-  tsPipelineBadge: {
-    fontSize: 10, fontWeight: '700', color: C.blueMid, textTransform: 'uppercase',
-    letterSpacing: 0.5, backgroundColor: C.blueLight, borderWidth: 1, borderColor: C.blueBorder,
-    borderRadius: 6, paddingVertical: 4, paddingHorizontal: 8, width: 80, textAlign: 'center',
-  },
-  tsPatientStrip: {
-    backgroundColor: C.blueLight, paddingHorizontal: 20, paddingVertical: 10,
-    borderBottomWidth: 1, borderBottomColor: C.blueBorder,
-  },
-  tsPatientName: { fontSize: 14, fontWeight: '700', color: C.blue },
-  tsPatientSub: { fontSize: 12, color: C.textMid, marginTop: 1 },
-  tsBody: { padding: 20, paddingBottom: 8 },
-  tsLabel: { fontSize: 13, color: C.textMid, marginBottom: 12, lineHeight: 18 },
-  tsInput: {
-    backgroundColor: C.white, borderWidth: 1, borderColor: C.border,
-    borderRadius: 12, padding: 16, fontSize: 15, color: C.textDark,
-    minHeight: 320, lineHeight: 22,
-  },
   tsFooter: {
     padding: 20, paddingTop: 12, borderTopWidth: 1, borderTopColor: C.border, backgroundColor: C.bg, gap: 12,
   },
-  playbackBar: {
-    flexDirection: 'row', alignItems: 'center', gap: 12,
-    backgroundColor: C.white, borderRadius: 12, padding: 10,
-    borderWidth: 1, borderColor: C.border,
-  },
-  playbackBtn: { padding: 2 },
-  playbackInfo: { flex: 1, gap: 4 },
-  playbackLabel: { fontSize: 12, fontWeight: '600', color: C.blue },
-  progressTrack: { height: 4, backgroundColor: C.border, borderRadius: 2, overflow: 'hidden' },
-  progressFill: { height: 4, backgroundColor: C.gold, borderRadius: 2 },
-  playbackTime: { fontSize: 11, color: C.textMid },
   summaryBody: { padding: 20, paddingBottom: 8 },
   summaryText: { fontSize: 15, color: C.textDark, lineHeight: 26 },
+
+  noteTitle: { fontSize: 20, fontWeight: '800', color: C.blue, marginBottom: 16 },
+  noteSection: {
+    backgroundColor: C.white, borderWidth: 1, borderColor: C.border,
+    borderRadius: 12, padding: 16, marginBottom: 12,
+  },
+  noteSectionTitle: {
+    fontSize: 11, fontWeight: '700', color: C.blueMid, textTransform: 'uppercase',
+    letterSpacing: 0.5, marginBottom: 6,
+  },
+  noteSectionContent: { fontSize: 15, color: C.textDark, lineHeight: 22 },
 });
