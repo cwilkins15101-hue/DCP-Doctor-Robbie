@@ -34,19 +34,6 @@ async function fetchRetrievalData(retrievalUrl) {
   return response.json();
 }
 
-// The retrieval response's `data` field is itself a JSON string carrying
-// artifact_type (e.g. "drc_native_note" for the note, a different value for
-// a transcript) — Dragon Copilot delivers these as separate notifications
-// for the same correlationId, so this is what tells them apart in storage.
-function extractArtifactType(retrievalData) {
-  try {
-    const inner = typeof retrievalData?.data === 'string' ? JSON.parse(retrievalData.data) : null;
-    return inner?.artifact_type || 'unknown';
-  } catch {
-    return 'unknown';
-  }
-}
-
 async function handleNotification(request, context) {
   // Simplest of the three documented security options: a shared secret
   // passed as ?access_token=... when the subscription was provisioned.
@@ -82,15 +69,18 @@ async function handleNotification(request, context) {
 
   try {
     const data = await fetchRetrievalData(retrievalUrl);
-    const artifactType = extractArtifactType(data);
-    await saveResult(correlationId, artifactType, {
+    // Keyed by the CloudEvent's own type (e.g. "encounter_data_ready_complete"
+    // vs "transcript_ready_complete") rather than a field parsed out of the
+    // retrieval payload — the confirmed transcript schema doesn't carry an
+    // artifact_type field at all, so that wouldn't reliably tell them apart.
+    await saveResult(correlationId, eventType, {
       eventType,
       customerId: event.data.customerId,
       userId: event.data.userId,
       receivedAt: new Date().toISOString(),
       data,
     });
-    context.log(`Stored "${artifactType}" artifact for correlationId ${correlationId}.`);
+    context.log(`Stored "${eventType}" result for correlationId ${correlationId}.`);
   } catch (err) {
     // Log and still return 200 — Event Grid will retry deliveries on
     // failure responses, which isn't what we want for an error on our

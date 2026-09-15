@@ -12,8 +12,8 @@ process.env.AzureWebJobsStorage = 'UseDevelopmentStorage=true';
 // function under test, so its destructured references pick up the stubs.
 const storage = require('../src/lib/storage');
 const savedResults = [];
-storage.saveResult = async (correlationId, artifactType, payload) => {
-  savedResults.push({ correlationId, artifactType, payload });
+storage.saveResult = async (correlationId, eventType, payload) => {
+  savedResults.push({ correlationId, eventType, payload });
 };
 storage.getResults = async (correlationId) => {
   if (correlationId === 'known-id') {
@@ -123,23 +123,29 @@ test('POST with recognized event type retrieves and stores the data', async () =
   assert.equal(res.status, 200);
   assert.equal(savedResults.length, 1);
   assert.equal(savedResults[0].correlationId, 'corr-1');
-  assert.equal(savedResults[0].artifactType, 'unknown');
+  assert.equal(savedResults[0].eventType, 'encounter_data_ready_complete');
   assert.deepEqual(savedResults[0].payload.data, { transcript: 'hello world' });
   assert.equal(savedResults[0].payload.customerId, 'cust-1');
 });
 
-test('POST with a note artifact stores it under its artifact_type', async () => {
+test('POST with a transcript_ready_complete event is recognized and stored (not discarded)', async () => {
   savedResults.length = 0;
   global.fetch = async () => ({
     ok: true,
-    json: async () => ({ data: JSON.stringify({ artifact_type: 'drc_native_note', resources: [] }) }),
+    json: async () => ({
+      data: JSON.stringify({
+        recordings: [],
+        sessions: [],
+        transcript: { speaker_count: 2, turns: [{ index: 1, speaker: 'clinician', text: 'Hi' }] },
+      }),
+    }),
   });
   const res = await webhookHandler(
     fakeRequest({
       query: { access_token: 'test-webhook-secret' },
       body: JSON.stringify({
         specversion: '1.0',
-        type: 'encounter_data_ready_complete',
+        type: 'transcript_ready_complete',
         data: { retrievalUrl: 'https://example.com/retrieval/123', correlationId: 'corr-2' },
       }),
     }),
@@ -147,7 +153,7 @@ test('POST with a note artifact stores it under its artifact_type', async () => 
   );
   assert.equal(res.status, 200);
   assert.equal(savedResults.length, 1);
-  assert.equal(savedResults[0].artifactType, 'drc_native_note');
+  assert.equal(savedResults[0].eventType, 'transcript_ready_complete');
 });
 
 test('getResult OPTIONS preflight returns 204 with CORS headers', async () => {

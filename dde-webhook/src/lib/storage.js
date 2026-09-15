@@ -24,23 +24,25 @@ async function getTableClient() {
 // Table Storage needs a partitionKey + rowKey. A fixed partitionKey keeps
 // this simple since Doctor Robbie's volume doesn't need partition-based
 // scaling. Dragon Copilot delivers a recording's transcript and note as
-// separate artifacts (see Dragon Copilot APIs for partners docs), so the
-// rowKey includes the artifact type — a plain correlationId rowKey would
-// let a later delivery silently overwrite an earlier one.
+// separate notifications, each with its own CloudEvent type (see
+// Notification events docs — e.g. "encounter_data_ready_complete" vs
+// "transcript_ready_complete"), so the rowKey includes that event type —
+// a plain correlationId rowKey would let a later delivery silently
+// overwrite an earlier one.
 const PARTITION_KEY = 'session';
 
-function rowKeyFor(correlationId, artifactType) {
-  return `${correlationId}::${artifactType}`;
+function rowKeyFor(correlationId, eventType) {
+  return `${correlationId}::${eventType}`;
 }
 
-async function saveResult(correlationId, artifactType, payload) {
+async function saveResult(correlationId, eventType, payload) {
   const client = await getTableClient();
   await client.upsertEntity(
     {
       partitionKey: PARTITION_KEY,
-      rowKey: rowKeyFor(correlationId, artifactType),
+      rowKey: rowKeyFor(correlationId, eventType),
       correlationId,
-      artifactType,
+      eventType,
       dataJson: JSON.stringify(payload),
       storedAt: new Date().toISOString(),
     },
@@ -48,7 +50,7 @@ async function saveResult(correlationId, artifactType, payload) {
   );
 }
 
-// Returns a map of artifactType -> { data, storedAt } for every artifact
+// Returns a map of eventType -> { data, storedAt } for every result
 // received so far for this correlationId, or null if none have arrived yet.
 async function getResults(correlationId) {
   const client = await getTableClient();
@@ -57,7 +59,7 @@ async function getResults(correlationId) {
   });
   const results = {};
   for await (const entity of entities) {
-    results[entity.artifactType] = { data: JSON.parse(entity.dataJson), storedAt: entity.storedAt };
+    results[entity.eventType] = { data: JSON.parse(entity.dataJson), storedAt: entity.storedAt };
   }
   return Object.keys(results).length > 0 ? results : null;
 }

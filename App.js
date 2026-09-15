@@ -85,15 +85,19 @@ function parseCSV(text) {
 }
 
 // ---------------------------------------------------------------------------
-// Dragon standard payload — the note itself lives at data.data as a JSON
-// string (confirmed from a real webhook delivery); resources[] holds the
-// note's sections, each with a display name and text (often empty for
-// sections the encounter didn't cover). Returns null if the shape doesn't
-// match, so callers can fall back to showing the raw JSON.
+// Dragon standard payload — noteBody here is one entry from getResult's
+// artifacts map: { data: <webhook payload>, storedAt }, and the webhook
+// payload's own `data` field is the Dragon Data Exchange retrieval
+// response { notificationId, data: "<JSON string>" } — so the actual note
+// JSON is three levels down at data.data.data (confirmed from a real
+// webhook delivery). resources[] holds the note's sections, each with a
+// display name and text (often empty for sections the encounter didn't
+// cover). Returns null if the shape doesn't match, so callers can fall
+// back to showing the raw JSON.
 // ---------------------------------------------------------------------------
 function parseDragonNote(noteBody) {
   try {
-    const raw = noteBody?.data?.data;
+    const raw = noteBody?.data?.data?.data;
     if (typeof raw !== 'string') return null;
     const payload = JSON.parse(raw);
     const sections = (payload.resources || [])
@@ -110,23 +114,26 @@ function parseDragonNote(noteBody) {
   }
 }
 
-// Dragon Copilot delivers the turn-by-turn transcript as a separate
-// artifact from the note (see Dragon Copilot APIs for partners docs), but
-// its exact field names haven't been confirmed against a real delivery
-// yet — this tries a few likely shapes and returns null (falling back to
-// raw JSON) if none match, the same pattern used for the note above.
+// Dragon Copilot delivers the transcript as a separate notification from
+// the note (event type transcript_ready_complete vs
+// encounter_data_ready_complete — see Notification events docs). Its
+// retrieval payload's confirmed shape (see Recordings, sessions, and
+// transcript docs) is transcript.turns[], each with an index, a speaker
+// ("clinician" or "other"), and text — no artifact_type field at all.
 function parseDragonTranscript(transcriptBody) {
   try {
-    const raw = transcriptBody?.data?.data;
+    const raw = transcriptBody?.data?.data?.data;
     if (typeof raw !== 'string') return null;
     const payload = JSON.parse(raw);
-    const rawTurns = payload.turns || payload.transcript?.turns || payload.dialogue || payload.utterances;
+    const rawTurns = payload.transcript?.turns;
     if (!Array.isArray(rawTurns) || rawTurns.length === 0) return null;
     const turns = rawTurns
-      .map((t, i) => ({
-        id: String(i),
-        speaker: t.speaker || t.role || t.participant || 'Speaker',
-        text: (t.text || t.content || t.utterance || '').replace(/\r\n/g, '\n').trim(),
+      .slice()
+      .sort((a, b) => (a.index ?? 0) - (b.index ?? 0))
+      .map((t) => ({
+        id: String(t.index),
+        speaker: t.speaker === 'clinician' ? 'Clinician' : t.speaker === 'other' ? 'Patient' : (t.speaker || 'Speaker'),
+        text: (t.text || '').replace(/\r\n/g, '\n').trim(),
       }))
       .filter((t) => t.text.length > 0);
     return turns.length > 0 ? { turns } : null;
@@ -135,10 +142,9 @@ function parseDragonTranscript(transcriptBody) {
   }
 }
 
-// Finds the delivered artifact whose type name contains the given keyword
-// (e.g. "note" or "transcript") — Dragon Copilot's exact artifact_type
-// strings for each aren't documented, so this matches loosely rather than
-// relying on one exact confirmed value like "drc_native_note".
+// Finds the delivered result whose CloudEvent type contains the given
+// keyword — results are now keyed by Dragon's own event types (e.g.
+// "encounter_data_ready_complete", "transcript_ready_complete").
 function findArtifact(artifacts, keyword) {
   if (!artifacts) return null;
   const entry = Object.entries(artifacts).find(([type]) => type.toLowerCase().includes(keyword));
@@ -182,8 +188,16 @@ export default function App() {
   const [dragonCorrelationId, setDragonCorrelationId] = useState(null);
   const [dragonDdeChecking, setDragonDdeChecking] = useState(false);
   const [dragonDdeResult, setDragonDdeResult] = useState(null);
-  const [dragonReady, setDragonReady] = useState(false);
   const [noteTab, setNoteTab] = useState('note');
+
+  // The note and transcript are delivered as separate, independent
+  // notifications (see webhookReceiver.js) — track their readiness
+  // separately rather than as one combined status.
+  const artifacts = dragonDdeResult?.artifacts ?? null;
+  const noteResult = findArtifact(artifacts, 'encounter_data');
+  const transcriptResult = findArtifact(artifacts, 'transcript');
+  const noteReady = !!noteResult;
+  const transcriptReady = !!transcriptResult;
 
   const pulseAnim = useRef(new Animated.Value(1)).current;
   const timerRef = useRef(null);
@@ -195,24 +209,47 @@ export default function App() {
     })();
   }, []);
 
-  // Watches for Dragon Copilot's result to arrive in the background, purely
-  // to flip the status badge to "Ready" — it doesn't load the content, so
-  // the physician still decides when to tap "Check for Results".
+  // Watches for Dragon Copilot's results in the background, updating
+  // dragonDdeResult as soon as either the note or the transcript lands —
+  // whichever arrives first is shown right away, independent of the other.
+  // Stops once both have arrived, or after about 5 minutes.
   useEffect(() => {
-    if (screen !== 'dragonNote' || !dragonCorrelationId || dragonReady) return;
-    let cancelled = false;
-    DdeClient.pollForResult(dragonCorrelationId)
-      .then(() => {
-        if (!cancelled) setDragonReady(true);
-      })
-      .catch(() => {
-        // Timed out without a result — the physician can still check
-        // manually with "Check for Results".
-      });
+    if (screen !== 'dragonNote' || !dragonCorrelationId || (noteReady && transcriptReady)) return;
+    let stopped = false;
+    let attempts = 0;
+    const MAX_ATTEMPTS = 60; // ~5 minutes at 5s intervals
+    const intervalId = setInterval(async () => {
+      if (stopped) return;
+      attempts += 1;
+      try {
+        const result = await DdeClient.fetchResult(dragonCorrelationId);
+        if (!stopped && result) {
+          setDragonDdeResult(result);
+        }
+      } catch {
+        // Transient errors are fine to ignore on a background poll.
+      }
+      if (attempts >= MAX_ATTEMPTS) {
+        stopped = true;
+        clearInterval(intervalId);
+      }
+    }, 5000);
     return () => {
-      cancelled = true;
+      stopped = true;
+      clearInterval(intervalId);
     };
-  }, [screen, dragonCorrelationId, dragonReady]);
+  }, [screen, dragonCorrelationId, noteReady, transcriptReady]);
+
+  // If the transcript shows up before the note, switch to it automatically
+  // so the physician sees it right away instead of a "still processing"
+  // placeholder on the default Note tab. Only fires on that transition —
+  // it won't fight a physician who's deliberately switched tabs since.
+  useEffect(() => {
+    if (transcriptReady && !noteReady && noteTab === 'note') {
+      setNoteTab('transcript');
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [transcriptReady, noteReady]);
 
   useEffect(() => {
     if (isRecording) {
@@ -334,7 +371,6 @@ export default function App() {
       const correlationId = await DragonCopilotBackend.submitRecording(audioUri, audioName, selectedPatient);
       setDragonCorrelationId(correlationId);
       setDragonDdeResult(null);
-      setDragonReady(false);
       setNoteTab('note');
       setScreen('dragonNote');
     } catch (err) {
@@ -361,7 +397,6 @@ export default function App() {
         return;
       }
       setDragonDdeResult(result);
-      setDragonReady(true);
     } catch (err) {
       setDragonError(String(err?.message ?? err));
     } finally {
@@ -397,12 +432,8 @@ export default function App() {
   // =========================================================================
   if (screen === 'dragonNote') {
     const missingKeys = DragonCopilotBackend.missingConfigKeys();
-    const isReady = dragonReady || !!dragonDdeResult;
-    const artifacts = dragonDdeResult?.artifacts ?? null;
-    const noteBody = findArtifact(artifacts, 'note');
-    const transcriptBody = findArtifact(artifacts, 'transcript');
-    const parsedNote = noteBody ? parseDragonNote(noteBody) : null;
-    const parsedTranscript = transcriptBody ? parseDragonTranscript(transcriptBody) : null;
+    const parsedNote = noteResult ? parseDragonNote(noteResult) : null;
+    const parsedTranscript = transcriptResult ? parseDragonTranscript(transcriptResult) : null;
 
     function renderNoteTab() {
       if (parsedNote) {
@@ -418,8 +449,8 @@ export default function App() {
           </>
         );
       }
-      if (noteBody) {
-        return <Text style={styles.summaryText} selectable>{JSON.stringify(noteBody, null, 2)}</Text>;
+      if (noteResult) {
+        return <Text style={styles.summaryText} selectable>{JSON.stringify(noteResult, null, 2)}</Text>;
       }
       return <Text style={styles.dragonBodyText}>The note hasn't been delivered yet.</Text>;
     }
@@ -433,10 +464,23 @@ export default function App() {
           </View>
         ));
       }
-      if (transcriptBody) {
-        return <Text style={styles.summaryText} selectable>{JSON.stringify(transcriptBody, null, 2)}</Text>;
+      if (transcriptResult) {
+        return <Text style={styles.summaryText} selectable>{JSON.stringify(transcriptResult, null, 2)}</Text>;
       }
       return <Text style={styles.dragonBodyText}>The transcript hasn't been delivered yet.</Text>;
+    }
+
+    function renderStatusBadge(label, ready) {
+      return (
+        <View key={label} style={styles.statusItem}>
+          <Text style={styles.statusLabel}>{label}</Text>
+          <View style={[styles.noteStatusBadge, ready ? styles.noteStatusBadgeReady : styles.noteStatusBadgeSubmitted]}>
+            <Text style={[styles.noteStatusBadgeText, ready ? styles.noteStatusBadgeTextReady : styles.noteStatusBadgeTextSubmitted]}>
+              {ready ? 'Ready' : 'Submitted'}
+            </Text>
+          </View>
+        </View>
+      );
     }
 
     return (
@@ -447,88 +491,92 @@ export default function App() {
             <Text style={styles.backButtonText}>‹ Back</Text>
           </TouchableOpacity>
           <Text style={styles.tsTitle}>Dragon Copilot</Text>
-          <View style={[styles.noteStatusBadge, isReady ? styles.noteStatusBadgeReady : styles.noteStatusBadgeSubmitted]}>
-            <Text style={[styles.noteStatusBadgeText, isReady ? styles.noteStatusBadgeTextReady : styles.noteStatusBadgeTextSubmitted]}>
-              {isReady ? 'Ready' : 'Submitted'}
-            </Text>
-          </View>
+          <View style={{ width: 80 }} />
         </View>
 
-        {artifacts ? (
-          <>
-            <View style={styles.noteTabRow}>
-              <TouchableOpacity
-                style={[styles.noteTabButton, noteTab === 'note' && styles.noteTabButtonActive]}
-                onPress={() => setNoteTab('note')}
-              >
-                <Text style={[styles.noteTabButtonText, noteTab === 'note' && styles.noteTabButtonTextActive]}>
-                  Note
-                </Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.noteTabButton, noteTab === 'transcript' && styles.noteTabButtonActive]}
-                onPress={() => setNoteTab('transcript')}
-              >
-                <Text style={[styles.noteTabButtonText, noteTab === 'transcript' && styles.noteTabButtonTextActive]}>
-                  Transcript
-                </Text>
-              </TouchableOpacity>
-            </View>
-            <ScrollView contentContainerStyle={styles.summaryBody}>
-              {noteTab === 'note' ? renderNoteTab() : renderTranscriptTab()}
-            </ScrollView>
-            <View style={styles.tsFooter}>
-              <TouchableOpacity
-                style={styles.primaryButton}
-                onPress={() => {
-                  setScreen('record');
-                  setAudioUri(null);
-                  setAudioName(null);
-                  setDragonCorrelationId(null);
-                  setDragonDdeResult(null);
-                  setDragonReady(false);
-                  setNoteTab('note');
-                  setDuration(0);
-                }}
-              >
-                <Text style={styles.primaryButtonText}>New Encounter</Text>
-              </TouchableOpacity>
-            </View>
-          </>
-        ) : (
+        {missingKeys.length > 0 ? (
           <ScrollView contentContainerStyle={styles.dragonBody}>
-            {missingKeys.length > 0 ? (
-              <View style={styles.dragonWarningBox}>
-                <Text style={styles.dragonWarningTitle}>Missing configuration</Text>
-                <Text style={styles.dragonWarningText}>Add these to your .env file:</Text>
-                {missingKeys.map((key) => (
-                  <Text key={key} style={styles.dragonWarningItem}>• {key}</Text>
-                ))}
-              </View>
-            ) : (
-              <View style={styles.dragonCenterBlock}>
-                <Text style={styles.dragonBodyText}>
-                  Dragon Copilot is processing this recording in the background. This can take
-                  a minute or two — check back to see if it's ready.
-                </Text>
-                <TouchableOpacity
-                  style={[styles.primaryButton, dragonDdeChecking && styles.buttonDisabled]}
-                  onPress={handleCheckDdeResult}
-                  disabled={dragonDdeChecking}
-                >
-                  {dragonDdeChecking ? (
-                    <View style={styles.loadingRow}>
-                      <ActivityIndicator color="#fff" size="small" />
-                      <Text style={[styles.primaryButtonText, { marginLeft: 10 }]}>Checking…</Text>
-                    </View>
-                  ) : (
-                    <Text style={styles.primaryButtonText}>Check for Results</Text>
-                  )}
-                </TouchableOpacity>
-                {!!dragonError && <Text style={styles.dragonErrorText}>{dragonError}</Text>}
-              </View>
-            )}
+            <View style={styles.dragonWarningBox}>
+              <Text style={styles.dragonWarningTitle}>Missing configuration</Text>
+              <Text style={styles.dragonWarningText}>Add these to your .env file:</Text>
+              {missingKeys.map((key) => (
+                <Text key={key} style={styles.dragonWarningItem}>• {key}</Text>
+              ))}
+            </View>
           </ScrollView>
+        ) : (
+          <>
+            <View style={styles.statusRow}>
+              {renderStatusBadge('Note', noteReady)}
+              {renderStatusBadge('Transcript', transcriptReady)}
+            </View>
+
+            {artifacts ? (
+              <>
+                <View style={styles.noteTabRow}>
+                  <TouchableOpacity
+                    style={[styles.noteTabButton, noteTab === 'note' && styles.noteTabButtonActive]}
+                    onPress={() => setNoteTab('note')}
+                  >
+                    <Text style={[styles.noteTabButtonText, noteTab === 'note' && styles.noteTabButtonTextActive]}>
+                      Note
+                    </Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.noteTabButton, noteTab === 'transcript' && styles.noteTabButtonActive]}
+                    onPress={() => setNoteTab('transcript')}
+                  >
+                    <Text style={[styles.noteTabButtonText, noteTab === 'transcript' && styles.noteTabButtonTextActive]}>
+                      Transcript
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+                <ScrollView contentContainerStyle={styles.summaryBody}>
+                  {noteTab === 'note' ? renderNoteTab() : renderTranscriptTab()}
+                </ScrollView>
+                <View style={styles.tsFooter}>
+                  <TouchableOpacity
+                    style={styles.primaryButton}
+                    onPress={() => {
+                      setScreen('record');
+                      setAudioUri(null);
+                      setAudioName(null);
+                      setDragonCorrelationId(null);
+                      setDragonDdeResult(null);
+                      setNoteTab('note');
+                      setDuration(0);
+                    }}
+                  >
+                    <Text style={styles.primaryButtonText}>New Encounter</Text>
+                  </TouchableOpacity>
+                </View>
+              </>
+            ) : (
+              <ScrollView contentContainerStyle={styles.dragonBody}>
+                <View style={styles.dragonCenterBlock}>
+                  <Text style={styles.dragonBodyText}>
+                    Dragon Copilot is processing this recording in the background. This can take
+                    a minute or two — the status above updates automatically, or check manually below.
+                  </Text>
+                  <TouchableOpacity
+                    style={[styles.primaryButton, dragonDdeChecking && styles.buttonDisabled]}
+                    onPress={handleCheckDdeResult}
+                    disabled={dragonDdeChecking}
+                  >
+                    {dragonDdeChecking ? (
+                      <View style={styles.loadingRow}>
+                        <ActivityIndicator color="#fff" size="small" />
+                        <Text style={[styles.primaryButtonText, { marginLeft: 10 }]}>Checking…</Text>
+                      </View>
+                    ) : (
+                      <Text style={styles.primaryButtonText}>Check for Results</Text>
+                    )}
+                  </TouchableOpacity>
+                  {!!dragonError && <Text style={styles.dragonErrorText}>{dragonError}</Text>}
+                </View>
+              </ScrollView>
+            )}
+          </>
         )}
       </SafeAreaView>
     );
@@ -862,6 +910,16 @@ const styles = StyleSheet.create({
   backButton: { width: 80 },
   backButtonText: { color: C.gold, fontSize: 16, fontWeight: '600' },
   tsTitle: { fontSize: 17, fontWeight: '700', color: C.blue },
+  statusRow: {
+    flexDirection: 'row', justifyContent: 'center', gap: 24,
+    paddingVertical: 12, paddingHorizontal: 16,
+    borderBottomWidth: 1, borderBottomColor: C.border, backgroundColor: C.bg,
+  },
+  statusItem: { alignItems: 'center', gap: 4 },
+  statusLabel: {
+    fontSize: 10, fontWeight: '700', color: C.textLight,
+    textTransform: 'uppercase', letterSpacing: 0.5,
+  },
   noteStatusBadge: {
     minWidth: 80, alignItems: 'center', paddingVertical: 4, paddingHorizontal: 10,
     borderRadius: 6, borderWidth: 1,

@@ -65,11 +65,14 @@ module.exports = {
   resultsTableName: () => process.env.DDE_RESULTS_TABLE || 'ddeResults',
 
   // Only notifications with one of these types are processed; everything
-  // else is acknowledged (200) but ignored. Adjust once you've confirmed
-  // the exact event type(s) Doctor Robbie's product tier sends — this is
-  // the one named in Microsoft's sample code.
+  // else is acknowledged (200) but ignored. Per Microsoft's "Notification
+  // events" docs, the note and transcript arrive as separate event types
+  // in the "dax" family — encounter_data_ready_complete for the note,
+  // transcript_ready_complete for the transcript. (Other dax event types
+  // exist too — failures, updates, orders, audio — add them here if this
+  // integration needs to react to those as well.)
   recognizedEventTypes: () =>
-    (process.env.DDE_RECOGNIZED_EVENT_TYPES || 'encounter_data_ready_complete')
+    (process.env.DDE_RECOGNIZED_EVENT_TYPES || 'encounter_data_ready_complete,transcript_ready_complete')
       .split(',')
       .map((s) => s.trim())
       .filter(Boolean),
