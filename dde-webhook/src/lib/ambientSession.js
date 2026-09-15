@@ -3,7 +3,7 @@
 // correlationId. Lives on the Dragon Copilot Partner API host, which is a
 // different host/scope than the AAS audio-upload endpoints.
 const config = require('./config');
-const { getDragonApiToken } = require('./dragonApiAuth');
+const { getDragonApiToken, describeTokenForAllowList } = require('./dragonApiAuth');
 
 async function createAmbientSession({ correlationId, externalUserId, data, ehrInstanceId }) {
   const token = await getDragonApiToken();
@@ -31,7 +31,12 @@ async function createAmbientSession({ correlationId, externalUserId, data, ehrIn
   });
 
   if (!response.ok) {
-    throw new Error(`createAmbientSession failed (${response.status}): ${await response.text()}`);
+    // TEMPORARY — includes the token's claims (for the Dragon Copilot
+    // partner allow-list request) directly in the error, since that's
+    // reliably visible via context.error. Remove once allow-listed.
+    throw new Error(
+      `createAmbientSession failed (${response.status}): ${await response.text()} | token claims: ${describeTokenForAllowList(token)}`
+    );
   }
   return response.json();
 }
