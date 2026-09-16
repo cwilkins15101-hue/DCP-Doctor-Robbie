@@ -18,6 +18,11 @@ WebBrowser.maybeCompleteAuthSession();
 const SANDBOX_BASE_URL = (
   process.env.EXPO_PUBLIC_EPIC_SANDBOX_URL || 'https://fhir.epic.com/interconnect-fhir-oauth'
 ).replace(/\/$/, '');
+// Epic requires the authorize request to name the FHIR server it's for via
+// an `aud` parameter (SMART App Launch's audience check) — omitting it
+// causes a generic "Something went wrong trying to authorize the client"
+// error before the login screen even appears.
+const FHIR_BASE_URL = `${SANDBOX_BASE_URL}/api/FHIR/R4`;
 const CLIENT_ID = process.env.EXPO_PUBLIC_EPIC_CLIENT_ID;
 // user/* (not patient/*) scopes since this is a standalone provider launch,
 // not tied to a single EHR-launched patient context — the app needs to look
@@ -70,6 +75,7 @@ async function signIn() {
     redirectUri,
     responseType: AuthSession.ResponseType.Code,
     usePKCE: true,
+    extraParams: { aud: FHIR_BASE_URL },
   });
 
   const result = await request.promptAsync(discovery);
