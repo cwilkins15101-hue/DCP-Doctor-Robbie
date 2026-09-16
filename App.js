@@ -10,6 +10,7 @@ import { StatusBar } from 'expo-status-bar';
 import { Ionicons } from '@expo/vector-icons';
 import { DragonCopilotBackend } from './dragonCopilotBackend';
 import { DdeClient } from './ddeClient';
+import { EpicClient } from './epicClient';
 
 // ---------------------------------------------------------------------------
 // Color tokens — Blue & Gold
@@ -185,6 +186,7 @@ export default function App() {
   const [patients, setPatients] = useState([]);
   const [selectedPatient, setSelectedPatient] = useState(null);
   const [patientModalVisible, setPatientModalVisible] = useState(false);
+  const [loadingEpicPatients, setLoadingEpicPatients] = useState(false);
 
   // Dragon Copilot submission
   const [submitting, setSubmitting] = useState(false);
@@ -246,7 +248,9 @@ export default function App() {
   // Watches for Dragon Copilot's results in the background, updating
   // dragonDdeResult as soon as either the note or the transcript lands —
   // whichever arrives first is shown right away, independent of the other.
-  // Stops once both have arrived for this round, or after about 5 minutes.
+  // Stops once both have arrived for this round, or after about 15 minutes
+  // (observed average delivery time is ~6 minutes, so this leaves margin
+  // rather than cutting off right around when results typically land).
   // pollGeneration restarts this on every submission (including additional
   // recordings added to an already-ready encounter), since Dragon
   // Copilot re-processes the note/transcript each time.
@@ -254,7 +258,7 @@ export default function App() {
     if (screen !== 'dragonNote' || !dragonCorrelationId) return;
     let stopped = false;
     let attempts = 0;
-    const MAX_ATTEMPTS = 60; // ~5 minutes at 5s intervals
+    const MAX_ATTEMPTS = 180; // ~15 minutes at 5s intervals
     const intervalId = setInterval(async () => {
       if (stopped) return;
       attempts += 1;
@@ -393,6 +397,26 @@ export default function App() {
       }
     } catch (err) {
       Alert.alert('Error', 'Could not load patient list: ' + err.message);
+    }
+  }
+
+  // Signs into the Epic on FHIR sandbox (if not already signed in this
+  // session) and loads its documented test patients.
+  async function handleLoadEpicPatients() {
+    const missing = EpicClient.missingConfigKeys();
+    if (missing.length > 0) {
+      Alert.alert('Epic isn’t configured', `Add these to your .env file: ${missing.join(', ')}`);
+      return;
+    }
+    setLoadingEpicPatients(true);
+    try {
+      const epicPatients = await EpicClient.fetchSandboxPatients();
+      setPatients(epicPatients);
+      setPatientModalVisible(true);
+    } catch (err) {
+      Alert.alert('Epic sign-in failed', String(err?.message ?? err));
+    } finally {
+      setLoadingEpicPatients(false);
     }
   }
 
@@ -664,8 +688,8 @@ export default function App() {
                 <ScrollView contentContainerStyle={styles.dragonBody}>
                   <View style={styles.dragonCenterBlock}>
                     <Text style={styles.dragonBodyText}>
-                      Dragon Copilot is processing this recording in the background. This can take
-                      a minute or two — the status above updates automatically, or check manually below.
+                      Dragon Copilot is processing this recording in the background. This typically
+                      takes approximately 5 minutes — the status above updates automatically, or check manually below.
                     </Text>
                     <TouchableOpacity
                       style={[styles.primaryButton, dragonDdeChecking && styles.buttonDisabled]}
@@ -742,9 +766,22 @@ export default function App() {
             <Text style={styles.patientBannerChange}>Change</Text>
           </TouchableOpacity>
         ) : (
-          <TouchableOpacity style={styles.loadPatientButton} onPress={loadPatientList}>
-            <Text style={styles.loadPatientButtonText}>Load Patient List</Text>
-          </TouchableOpacity>
+          <View style={styles.patientSourceRow}>
+            <TouchableOpacity style={[styles.loadPatientButton, styles.patientSourceButton]} onPress={loadPatientList}>
+              <Text style={styles.loadPatientButtonText}>Load Patient List</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.loadPatientButton, styles.patientSourceButton, loadingEpicPatients && styles.buttonDisabled]}
+              onPress={handleLoadEpicPatients}
+              disabled={loadingEpicPatients}
+            >
+              {loadingEpicPatients ? (
+                <ActivityIndicator color={C.blue} size="small" />
+              ) : (
+                <Text style={styles.loadPatientButtonText}>Get Patients from Epic</Text>
+              )}
+            </TouchableOpacity>
+          </View>
         )}
 
         <>
@@ -928,12 +965,14 @@ const styles = StyleSheet.create({
   dragonWarningText: { fontSize: 13, color: C.textMid, marginBottom: 4 },
   dragonWarningItem: { fontSize: 12, color: C.textDark, fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace' },
 
+  patientSourceRow: { flexDirection: 'row', gap: 10, marginBottom: 32, width: '100%' },
+  patientSourceButton: { flex: 1 },
   loadPatientButton: {
     borderWidth: 1.5, borderColor: C.gold, borderStyle: 'dashed',
-    paddingVertical: 10, paddingHorizontal: 24, borderRadius: 10, marginBottom: 32,
-    backgroundColor: C.goldLight,
+    paddingVertical: 10, paddingHorizontal: 16, borderRadius: 10,
+    backgroundColor: C.goldLight, alignItems: 'center',
   },
-  loadPatientButtonText: { color: C.blue, fontSize: 14, fontWeight: '700' },
+  loadPatientButtonText: { color: C.blue, fontSize: 13, fontWeight: '700', textAlign: 'center' },
 
   patientBanner: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',

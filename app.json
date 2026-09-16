@@ -3,6 +3,7 @@
     "name": "Doctor Robbie",
     "slug": "doctor-robbie",
     "version": "1.0.0",
+    "scheme": "doctorrobbie",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
