@@ -198,6 +198,11 @@ export default function App() {
   const [loadingCcd, setLoadingCcd] = useState(false);
   const [ccd, setCcd] = useState(null); // { xml, meta }
   const [ccdError, setCcdError] = useState('');
+  const [loadingNotes, setLoadingNotes] = useState(false);
+  const [clinicalNotes, setClinicalNotes] = useState([]);
+  const [notesError, setNotesError] = useState('');
+  const [expandedNoteId, setExpandedNoteId] = useState(null);
+  const [noteTexts, setNoteTexts] = useState({}); // { [noteId]: { loading, text, error } }
 
   // Dragon Copilot submission
   const [submitting, setSubmitting] = useState(false);
@@ -437,8 +442,10 @@ export default function App() {
   }
 
   // Opens the chart modal and loads this Epic patient's Conditions
-  // (Problems & Reason for Visit). The CCD is fetched separately, on
-  // demand, since $docref generation is slower than a plain Condition read.
+  // (Problems & Reason for Visit) and the list of their Clinical Notes.
+  // The CCD, and each note's actual text, are fetched separately, on
+  // demand — $docref generation and note bodies are both slower/heavier
+  // than a plain list read.
   async function handleViewChart() {
     if (!selectedPatient?.id) return;
     setChartModalVisible(true);
@@ -447,6 +454,10 @@ export default function App() {
     setConditions([]);
     setCcd(null);
     setCcdError('');
+    setClinicalNotes([]);
+    setNotesError('');
+    setExpandedNoteId(null);
+    setNoteTexts({});
     try {
       const result = await EpicClient.fetchConditions(selectedPatient.id);
       setConditions(result);
@@ -454,6 +465,15 @@ export default function App() {
       setChartError(String(err?.message ?? err));
     } finally {
       setLoadingConditions(false);
+    }
+    setLoadingNotes(true);
+    try {
+      const notes = await EpicClient.fetchClinicalNotes(selectedPatient.id);
+      setClinicalNotes(notes);
+    } catch (err) {
+      setNotesError(String(err?.message ?? err));
+    } finally {
+      setLoadingNotes(false);
     }
   }
 
@@ -475,6 +495,34 @@ export default function App() {
     if (!ccd?.xml) return;
     await Clipboard.setStringAsync(ccd.xml);
     Alert.alert('Copied', 'The full CCD document was copied to your clipboard.');
+  }
+
+  // Expands/collapses a clinical note, fetching its text the first time
+  // it's opened (and reusing it after that).
+  async function handleToggleNote(note) {
+    if (expandedNoteId === note.id) {
+      setExpandedNoteId(null);
+      return;
+    }
+    setExpandedNoteId(note.id);
+    if (noteTexts[note.id]) return;
+    setNoteTexts((prev) => ({ ...prev, [note.id]: { loading: true, text: null, error: '' } }));
+    try {
+      const text = await EpicClient.fetchClinicalNoteText(note);
+      setNoteTexts((prev) => ({ ...prev, [note.id]: { loading: false, text, error: '' } }));
+    } catch (err) {
+      setNoteTexts((prev) => ({
+        ...prev,
+        [note.id]: { loading: false, text: null, error: String(err?.message ?? err) },
+      }));
+    }
+  }
+
+  async function handleCopyNoteText(note) {
+    const entry = noteTexts[note.id];
+    if (!entry?.text) return;
+    await Clipboard.setStringAsync(entry.text);
+    Alert.alert('Copied', 'The note text was copied to your clipboard.');
   }
 
   function handleDiscard() {
@@ -1059,6 +1107,54 @@ export default function App() {
                 </Text>
               </>
             ) : null}
+
+            <View style={styles.chartDivider} />
+
+            <Text style={styles.chartSectionTitle}>Clinical Notes</Text>
+            {loadingNotes ? (
+              <ActivityIndicator color={C.blue} style={styles.chartSpinner} />
+            ) : notesError ? (
+              <Text style={styles.chartErrorText}>{notesError}</Text>
+            ) : clinicalNotes.length === 0 ? (
+              <Text style={styles.chartEmptyText}>No clinical notes found for this patient.</Text>
+            ) : (
+              clinicalNotes.map((note) => {
+                const expanded = expandedNoteId === note.id;
+                const entry = noteTexts[note.id];
+                return (
+                  <View key={note.id} style={styles.conditionRow}>
+                    <TouchableOpacity onPress={() => handleToggleNote(note)}>
+                      <Text style={styles.conditionText}>{note.title}</Text>
+                      {(note.author || note.date) ? (
+                        <Text style={styles.conditionMeta}>
+                          {[note.author, note.date].filter(Boolean).join('  ·  ')}
+                        </Text>
+                      ) : null}
+                    </TouchableOpacity>
+                    {expanded ? (
+                      entry?.loading ? (
+                        <ActivityIndicator color={C.blue} style={styles.chartSpinner} />
+                      ) : entry?.error ? (
+                        <Text style={styles.chartErrorText}>{entry.error}</Text>
+                      ) : entry?.text ? (
+                        <>
+                          <TouchableOpacity
+                            style={[styles.loadPatientButton, styles.ccdCopyButton]}
+                            onPress={() => handleCopyNoteText(note)}
+                          >
+                            <Text style={styles.loadPatientButtonText}>Copy Note to Clipboard</Text>
+                          </TouchableOpacity>
+                          <Text style={styles.ccdText} selectable>
+                            {entry.text.slice(0, 2000)}
+                            {entry.text.length > 2000 ? '…' : ''}
+                          </Text>
+                        </>
+                      ) : null
+                    ) : null}
+                  </View>
+                );
+              })
+            )}
           </ScrollView>
         </SafeAreaView>
       </Modal>

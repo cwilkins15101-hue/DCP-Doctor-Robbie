@@ -99,10 +99,29 @@ async function fetchConditions(patientId) {
     .map(toAppCondition);
 }
 
+// Resolves a DocumentReference attachment into its actual text content —
+// either it's inline as base64 (attachment.data) or it points at a
+// separate Binary to fetch (attachment.url). Shared by CCD and Clinical
+// Notes retrieval, which both hand back attachments in this same shape.
+async function fetchAttachmentText(attachment, accessToken) {
+  if (attachment.data) {
+    return globalThis.atob(attachment.data);
+  }
+  if (attachment.url) {
+    const binaryResponse = await fetch(attachment.url, {
+      headers: { Authorization: `Bearer ${accessToken}`, Accept: attachment.contentType || 'application/xml' },
+    });
+    if (!binaryResponse.ok) {
+      throw new Error(`Epic document fetch failed (${binaryResponse.status}): ${await binaryResponse.text()}`);
+    }
+    return binaryResponse.text();
+  }
+  throw new Error('The document had neither inline data nor a retrievable URL.');
+}
+
 // Retrieves this patient's current CCD (Continuity of Care Document) via
 // the DocumentReference $docref operation. Epic generates it on demand and
-// returns a DocumentReference pointing at the document — either inline as
-// base64 (attachment.data) or as a separate Binary to fetch (attachment.url).
+// returns a DocumentReference pointing at the document.
 async function fetchCCD(patientId) {
   const accessToken = await EpicAuth.getAccessToken();
   const docRefResponse = await fetch(
@@ -125,25 +144,58 @@ async function fetchCCD(patientId) {
     type: docRef.type?.text ?? docRef.type?.coding?.[0]?.display ?? 'Continuity of Care Document',
     date: docRef.date ?? '',
   };
+  const xml = await fetchAttachmentText(attachment, accessToken);
+  return { xml, meta };
+}
 
-  if (attachment.data) {
-    return { xml: globalThis.atob(attachment.data), meta };
+// Converts a FHIR DocumentReference (Clinical Notes category) into a flat
+// shape for display. Keeps the raw attachment so its text can be fetched
+// later, on demand, only if the physician taps into that specific note.
+function toAppClinicalNote(resource) {
+  return {
+    id: resource.id,
+    title: resource.type?.text ?? resource.type?.coding?.[0]?.display ?? 'Clinical Note',
+    date: resource.date ?? '',
+    author: resource.author?.[0]?.display ?? '',
+    attachment: resource.content?.[0]?.attachment ?? null,
+  };
+}
+
+// Lists this patient's clinical notes (progress notes, H&P, discharge
+// summaries, etc.) — the actual free-text documents clinicians wrote, as
+// opposed to the system-generated CCD summary.
+async function fetchClinicalNotes(patientId) {
+  const accessToken = await EpicAuth.getAccessToken();
+  const response = await fetch(
+    `${FHIR_BASE_URL}/DocumentReference?patient=${encodeURIComponent(patientId)}&category=clinical-note`,
+    { headers: { Authorization: `Bearer ${accessToken}`, Accept: 'application/fhir+json' } }
+  );
+  if (!response.ok) {
+    throw new Error(`Epic Clinical Notes fetch failed (${response.status}): ${await response.text()}`);
   }
-  if (attachment.url) {
-    const binaryResponse = await fetch(attachment.url, {
-      headers: { Authorization: `Bearer ${accessToken}`, Accept: attachment.contentType || 'application/xml' },
-    });
-    if (!binaryResponse.ok) {
-      throw new Error(`Epic CCD document fetch failed (${binaryResponse.status}): ${await binaryResponse.text()}`);
-    }
-    return { xml: await binaryResponse.text(), meta };
+  const bundle = await response.json();
+  return (bundle.entry ?? [])
+    .map((entry) => entry.resource)
+    .filter((resource) => resource?.resourceType === 'DocumentReference')
+    .map(toAppClinicalNote);
+}
+
+// Fetches the actual text of one clinical note (as returned by
+// fetchClinicalNotes) — done lazily, per note, since a patient can have
+// many and most won't be opened.
+async function fetchClinicalNoteText(note) {
+  if (!note.attachment) {
+    throw new Error('This note has no retrievable content.');
   }
-  throw new Error('The CCD document had neither inline data nor a retrievable URL.');
+  const accessToken = await EpicAuth.getAccessToken();
+  return fetchAttachmentText(note.attachment, accessToken);
 }
 
 export const EpicClient = {
   fetchSandboxPatients,
   fetchConditions,
   fetchCCD,
+  fetchClinicalNotes,
+  fetchClinicalNoteText,
   missingConfigKeys: EpicAuth.missingConfigKeys,
 };

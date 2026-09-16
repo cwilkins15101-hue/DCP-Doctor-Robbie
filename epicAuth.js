@@ -27,13 +27,13 @@ const CLIENT_ID = process.env.EXPO_PUBLIC_EPIC_CLIENT_ID;
 // user/* (not patient/*) scopes since this is a standalone provider launch,
 // not tied to a single EHR-launched patient context — the app needs to look
 // up a list of patients itself. Condition scopes back the "Problems &
-// Reason for Visit" chart section; DocumentReference/Binary back CCD
-// retrieval via the $docref operation.
+// Reason for Visit" chart section; DocumentReference/Binary back both CCD
+// retrieval (the $docref operation) and Clinical Notes.
 const SCOPES = (
   process.env.EXPO_PUBLIC_EPIC_SCOPES ||
   'openid fhirUser online_access user/Patient.read user/Patient.search ' +
     'user/Condition.read user/Condition.search ' +
-    'user/DocumentReference.read user/Binary.read'
+    'user/DocumentReference.read user/DocumentReference.search user/Binary.read'
 )
   .trim()
   .split(/\s+/)

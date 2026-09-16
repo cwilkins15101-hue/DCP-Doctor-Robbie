@@ -44,8 +44,9 @@ Config needed: `EXPO_PUBLIC_DDE_SERVER_URL`, `EXPO_PUBLIC_DDE_APP_SECRET`, and `
 For a patient loaded from Epic (has a FHIR `id`), "View Chart" on the recording screen opens a modal with:
 - **Problems & Reason for Visit** — `Condition.Search` (`EpicClient.fetchConditions`), no category filter (Epic surfaces both under the same API).
 - **CCD** — the current Continuity of Care Document, generated on demand via the `DocumentReference/$docref` operation (`EpicClient.fetchCCD`), resolving the returned attachment (inline base64 or a separate `Binary` fetch) into raw XML. Shown as a preview with a "Copy Full CCD to Clipboard" action (`expo-clipboard`) rather than a parsed viewer.
+- **Clinical Notes** — the list of the patient's actual written notes (progress notes, H&P, discharge summaries, etc.) via `DocumentReference.Search` with `category=clinical-note` (`EpicClient.fetchClinicalNotes`); tapping a note lazily fetches and expands its text (`EpicClient.fetchClinicalNoteText`), same attachment-resolving path as the CCD, with its own "Copy Note to Clipboard".
 
-Requires `EXPO_PUBLIC_EPIC_CLIENT_ID` from a free "Non-Production" app registered at fhir.epic.com/Developer — see `.env.example`. That app's Incoming APIs list must include Patient, Condition, and the CCD/DocumentReference/Binary entries (all R4), and its Endpoint URI must match your current dev tunnel URL exactly. Tokens are cached in memory only (cleared on reload); there's no refresh-token handling, so sign-in runs again once a token expires.
+Requires `EXPO_PUBLIC_EPIC_CLIENT_ID` from a free "Non-Production" app registered at fhir.epic.com/Developer — see `.env.example`. That app's Incoming APIs list must include Patient, Condition, DocumentReference (Generated CDAs, for the CCD, and Clinical Notes, for notes), and Binary — all R4 — and its Endpoint URI must match your current dev tunnel URL exactly. Tokens are cached in memory only (cleared on reload); there's no refresh-token handling, so sign-in runs again once a token expires.
 
 ## Git LFS
 
