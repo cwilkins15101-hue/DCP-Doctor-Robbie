@@ -68,11 +68,16 @@ module.exports = {
   // else is acknowledged (200) but ignored. Per Microsoft's "Notification
   // events" docs, the note and transcript arrive as separate event types
   // in the "dax" family — encounter_data_ready_complete for the note,
-  // transcript_ready_complete for the transcript. (Other dax event types
-  // exist too — failures, updates, orders, audio — add them here if this
+  // transcript_ready_complete for the transcript. encounter_data_updated
+  // is included too since Doctor Robbie supports adding multiple
+  // recordings to one encounter — it's unconfirmed whether a re-processed
+  // note after an added recording arrives under this type or a repeat
+  // encounter_data_ready_complete, so both are accepted. (Other dax event
+  // types exist too — failures, orders, audio — add them here if this
   // integration needs to react to those as well.)
   recognizedEventTypes: () =>
-    (process.env.DDE_RECOGNIZED_EVENT_TYPES || 'encounter_data_ready_complete,transcript_ready_complete')
+    (process.env.DDE_RECOGNIZED_EVENT_TYPES ||
+      'encounter_data_ready_complete,transcript_ready_complete,encounter_data_updated')
       .split(',')
       .map((s) => s.trim())
       .filter(Boolean),

@@ -42,14 +42,18 @@ function buildContext(patient) {
 }
 
 // Uploads a finished recording to Doctor Robbie's own backend. Returns the
-// correlationId to poll for results with (see ddeClient.js).
-async function submitRecording(audioUri, audioName, patient) {
+// correlationId to poll for results with (see ddeClient.js). Pass an
+// existingCorrelationId to add another recording to an encounter already in
+// progress — Dragon Copilot ties multiple recordings to one encounter by
+// correlation_id (see the Recordings, sessions, and transcript docs) and
+// re-processes the note/transcript across all of them.
+async function submitRecording(audioUri, audioName, patient, existingCorrelationId) {
   const missing = missingConfigKeys();
   if (missing.length > 0) {
     throw new Error(`Dragon Copilot backend isn't configured: missing ${missing.join(', ')}`);
   }
 
-  const correlationId = newCorrelationId();
+  const correlationId = existingCorrelationId || newCorrelationId();
   const formData = new FormData();
 
   if (Platform.OS === 'web') {
