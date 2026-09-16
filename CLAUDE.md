@@ -37,11 +37,15 @@ The app follows a linear pipeline:
 
 Config needed: `EXPO_PUBLIC_DDE_SERVER_URL`, `EXPO_PUBLIC_DDE_APP_SECRET`, and `EXPO_PUBLIC_DRAGON_EXTERNAL_USER_ID` (must match a registered App user ID — see above) — see `.env.example`. The `dde-webhook` server has its own separate `.env` (see `dde-webhook/.env.example` and `dde-webhook/README.md`).
 
-## Epic on FHIR sandbox (patient lookup)
+## Epic on FHIR sandbox (patient lookup + chart)
 
-"Get Patients from Epic" (next to "Load Patient List") signs into the Epic on FHIR sandbox directly from the app (`epicAuth.js` — Authorization Code + PKCE via `expo-auth-session`, a public client, no client secret) and fetches the sandbox's documented test patients by known FHIR ID (`epicClient.js`), converting each FHIR `Patient` resource into the same field shape used by CSV-loaded patients. The sandbox doesn't support open-ended patient search, which is why this fetches a fixed list of IDs rather than searching.
+"Get Patients from Epic" (next to "Load Patient List") signs into the Epic on FHIR sandbox directly from the app (`epicAuth.js` — Authorization Code + PKCE via `expo-auth-session`, a public client, no client secret) and fetches the sandbox's documented test patients by known FHIR ID (`epicClient.js`), converting each FHIR `Patient` resource into the same field shape used by CSV-loaded patients (plus its FHIR `id`, which CSV-loaded patients don't have). The sandbox doesn't support open-ended patient search, which is why this fetches a fixed list of IDs rather than searching.
 
-Requires `EXPO_PUBLIC_EPIC_CLIENT_ID` from a free "Non-Production" app registered at fhir.epic.com/Developer — see `.env.example`. Tokens are cached in memory only (cleared on reload); there's no refresh-token handling, so sign-in runs again once a token expires.
+For a patient loaded from Epic (has a FHIR `id`), "View Chart" on the recording screen opens a modal with:
+- **Problems & Reason for Visit** — `Condition.Search` (`EpicClient.fetchConditions`), no category filter (Epic surfaces both under the same API).
+- **CCD** — the current Continuity of Care Document, generated on demand via the `DocumentReference/$docref` operation (`EpicClient.fetchCCD`), resolving the returned attachment (inline base64 or a separate `Binary` fetch) into raw XML. Shown as a preview with a "Copy Full CCD to Clipboard" action (`expo-clipboard`) rather than a parsed viewer.
+
+Requires `EXPO_PUBLIC_EPIC_CLIENT_ID` from a free "Non-Production" app registered at fhir.epic.com/Developer — see `.env.example`. That app's Incoming APIs list must include Patient, Condition, and the CCD/DocumentReference/Binary entries (all R4), and its Endpoint URI must match your current dev tunnel URL exactly. Tokens are cached in memory only (cleared on reload); there's no refresh-token handling, so sign-in runs again once a token expires.
 
 ## Git LFS
 

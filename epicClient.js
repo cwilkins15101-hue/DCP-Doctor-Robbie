@@ -38,15 +38,29 @@ function mrnFromFhir(resource) {
 }
 
 // Converts a FHIR Patient resource into the same field names used by
-// CSV-loaded patients ('Patient Name', 'MRN', 'DOB', ...).
+// CSV-loaded patients ('Patient Name', 'MRN', 'DOB', ...). Keeps the FHIR
+// id (CSV-loaded patients don't have one) — the chart screen needs it to
+// look up this specific patient's Conditions and CCD afterward.
 function toAppPatient(resource) {
   return {
+    id: resource.id,
     'Patient Name': nameFromFhir(resource),
     MRN: mrnFromFhir(resource),
     DOB: resource.birthDate ?? '',
     'Visit Date': '',
     'Visit Time': '',
     'Chief Complaint': '',
+  };
+}
+
+// Converts a FHIR Condition resource into a flat shape for display.
+function toAppCondition(resource) {
+  return {
+    id: resource.id,
+    text: resource.code?.text ?? resource.code?.coding?.[0]?.display ?? 'Unknown condition',
+    category: resource.category?.[0]?.coding?.[0]?.display ?? resource.category?.[0]?.text ?? '',
+    status: resource.clinicalStatus?.coding?.[0]?.code ?? '',
+    onset: resource.onsetDateTime ?? resource.recordedDate ?? '',
   };
 }
 
@@ -67,4 +81,69 @@ async function fetchSandboxPatients() {
   return resources.map(toAppPatient);
 }
 
-export const EpicClient = { fetchSandboxPatients, missingConfigKeys: EpicAuth.missingConfigKeys };
+// Fetches this patient's Conditions — Epic surfaces both problem-list items
+// and reason-for-visit-derived conditions under the same Condition.Search
+// API, so no category filter is needed.
+async function fetchConditions(patientId) {
+  const accessToken = await EpicAuth.getAccessToken();
+  const response = await fetch(`${FHIR_BASE_URL}/Condition?patient=${encodeURIComponent(patientId)}`, {
+    headers: { Authorization: `Bearer ${accessToken}`, Accept: 'application/fhir+json' },
+  });
+  if (!response.ok) {
+    throw new Error(`Epic Condition fetch failed (${response.status}): ${await response.text()}`);
+  }
+  const bundle = await response.json();
+  return (bundle.entry ?? [])
+    .map((entry) => entry.resource)
+    .filter((resource) => resource?.resourceType === 'Condition')
+    .map(toAppCondition);
+}
+
+// Retrieves this patient's current CCD (Continuity of Care Document) via
+// the DocumentReference $docref operation. Epic generates it on demand and
+// returns a DocumentReference pointing at the document — either inline as
+// base64 (attachment.data) or as a separate Binary to fetch (attachment.url).
+async function fetchCCD(patientId) {
+  const accessToken = await EpicAuth.getAccessToken();
+  const docRefResponse = await fetch(
+    `${FHIR_BASE_URL}/DocumentReference/$docref?patient=${encodeURIComponent(patientId)}`,
+    { headers: { Authorization: `Bearer ${accessToken}`, Accept: 'application/fhir+json' } }
+  );
+  if (!docRefResponse.ok) {
+    throw new Error(`Epic CCD lookup failed (${docRefResponse.status}): ${await docRefResponse.text()}`);
+  }
+  const bundle = await docRefResponse.json();
+  const docRef = (bundle.entry ?? [])
+    .map((entry) => entry.resource)
+    .find((resource) => resource?.resourceType === 'DocumentReference');
+  const attachment = docRef?.content?.[0]?.attachment;
+  if (!attachment) {
+    throw new Error('Epic did not return a CCD document for this patient.');
+  }
+
+  const meta = {
+    type: docRef.type?.text ?? docRef.type?.coding?.[0]?.display ?? 'Continuity of Care Document',
+    date: docRef.date ?? '',
+  };
+
+  if (attachment.data) {
+    return { xml: globalThis.atob(attachment.data), meta };
+  }
+  if (attachment.url) {
+    const binaryResponse = await fetch(attachment.url, {
+      headers: { Authorization: `Bearer ${accessToken}`, Accept: attachment.contentType || 'application/xml' },
+    });
+    if (!binaryResponse.ok) {
+      throw new Error(`Epic CCD document fetch failed (${binaryResponse.status}): ${await binaryResponse.text()}`);
+    }
+    return { xml: await binaryResponse.text(), meta };
+  }
+  throw new Error('The CCD document had neither inline data nor a retrievable URL.');
+}
+
+export const EpicClient = {
+  fetchSandboxPatients,
+  fetchConditions,
+  fetchCCD,
+  missingConfigKeys: EpicAuth.missingConfigKeys,
+};

@@ -6,6 +6,7 @@ import {
 } from 'react-native';
 import { Audio } from 'expo-av';
 import * as DocumentPicker from 'expo-document-picker';
+import * as Clipboard from 'expo-clipboard';
 import { StatusBar } from 'expo-status-bar';
 import { Ionicons } from '@expo/vector-icons';
 import { DragonCopilotBackend } from './dragonCopilotBackend';
@@ -187,6 +188,16 @@ export default function App() {
   const [selectedPatient, setSelectedPatient] = useState(null);
   const [patientModalVisible, setPatientModalVisible] = useState(false);
   const [loadingEpicPatients, setLoadingEpicPatients] = useState(false);
+
+  // Epic patient chart (Conditions + CCD) — only available for patients
+  // loaded from Epic (they carry a FHIR id; CSV-loaded patients don't).
+  const [chartModalVisible, setChartModalVisible] = useState(false);
+  const [loadingConditions, setLoadingConditions] = useState(false);
+  const [conditions, setConditions] = useState([]);
+  const [chartError, setChartError] = useState('');
+  const [loadingCcd, setLoadingCcd] = useState(false);
+  const [ccd, setCcd] = useState(null); // { xml, meta }
+  const [ccdError, setCcdError] = useState('');
 
   // Dragon Copilot submission
   const [submitting, setSubmitting] = useState(false);
@@ -423,6 +434,47 @@ export default function App() {
   function selectPatient(patient) {
     setSelectedPatient(patient);
     setPatientModalVisible(false);
+  }
+
+  // Opens the chart modal and loads this Epic patient's Conditions
+  // (Problems & Reason for Visit). The CCD is fetched separately, on
+  // demand, since $docref generation is slower than a plain Condition read.
+  async function handleViewChart() {
+    if (!selectedPatient?.id) return;
+    setChartModalVisible(true);
+    setLoadingConditions(true);
+    setChartError('');
+    setConditions([]);
+    setCcd(null);
+    setCcdError('');
+    try {
+      const result = await EpicClient.fetchConditions(selectedPatient.id);
+      setConditions(result);
+    } catch (err) {
+      setChartError(String(err?.message ?? err));
+    } finally {
+      setLoadingConditions(false);
+    }
+  }
+
+  async function handleFetchCCD() {
+    if (!selectedPatient?.id) return;
+    setLoadingCcd(true);
+    setCcdError('');
+    try {
+      const result = await EpicClient.fetchCCD(selectedPatient.id);
+      setCcd(result);
+    } catch (err) {
+      setCcdError(String(err?.message ?? err));
+    } finally {
+      setLoadingCcd(false);
+    }
+  }
+
+  async function handleCopyCCD() {
+    if (!ccd?.xml) return;
+    await Clipboard.setStringAsync(ccd.xml);
+    Alert.alert('Copied', 'The full CCD document was copied to your clipboard.');
   }
 
   function handleDiscard() {
@@ -765,7 +817,15 @@ export default function App() {
             </View>
             <Text style={styles.patientBannerChange}>Change</Text>
           </TouchableOpacity>
-        ) : (
+        ) : null}
+
+        {selectedPatient?.id ? (
+          <TouchableOpacity style={styles.debugLink} onPress={handleViewChart}>
+            <Text style={styles.debugLinkText}>View Chart (Problems & CCD)</Text>
+          </TouchableOpacity>
+        ) : null}
+
+        {!selectedPatient && (
           <View style={styles.patientSourceRow}>
             <TouchableOpacity style={[styles.loadPatientButton, styles.patientSourceButton]} onPress={loadPatientList}>
               <Text style={styles.loadPatientButtonText}>Load Patient List</Text>
@@ -936,6 +996,72 @@ export default function App() {
           </View>
         </SafeAreaView>
       </Modal>
+
+      {/* Patient chart modal — Conditions (Problems & Reason for Visit) + CCD, from Epic */}
+      <Modal
+        visible={chartModalVisible}
+        animationType="slide"
+        presentationStyle="pageSheet"
+        onRequestClose={() => setChartModalVisible(false)}
+      >
+        <SafeAreaView style={styles.modalSafeArea}>
+          <View style={styles.modalHeader}>
+            <Text style={styles.modalTitle}>Patient Chart</Text>
+            <TouchableOpacity onPress={() => setChartModalVisible(false)}>
+              <Text style={styles.modalClose}>Done</Text>
+            </TouchableOpacity>
+          </View>
+
+          <ScrollView contentContainerStyle={styles.chartScrollContent}>
+            <Text style={styles.chartSectionTitle}>Problems & Reason for Visit</Text>
+            {loadingConditions ? (
+              <ActivityIndicator color={C.blue} style={styles.chartSpinner} />
+            ) : chartError ? (
+              <Text style={styles.chartErrorText}>{chartError}</Text>
+            ) : conditions.length === 0 ? (
+              <Text style={styles.chartEmptyText}>No conditions found for this patient.</Text>
+            ) : (
+              conditions.map((c) => (
+                <View key={c.id} style={styles.conditionRow}>
+                  <Text style={styles.conditionText}>{c.text}</Text>
+                  {(c.category || c.status) ? (
+                    <Text style={styles.conditionMeta}>
+                      {[c.category, c.status].filter(Boolean).join('  ·  ')}
+                    </Text>
+                  ) : null}
+                </View>
+              ))
+            )}
+
+            <View style={styles.chartDivider} />
+
+            <Text style={styles.chartSectionTitle}>Continuity of Care Document (CCD)</Text>
+            {!ccd && !loadingCcd ? (
+              <TouchableOpacity style={styles.loadPatientButton} onPress={handleFetchCCD}>
+                <Text style={styles.loadPatientButtonText}>Get CCD</Text>
+              </TouchableOpacity>
+            ) : null}
+            {loadingCcd ? <ActivityIndicator color={C.blue} style={styles.chartSpinner} /> : null}
+            {ccdError ? <Text style={styles.chartErrorText}>{ccdError}</Text> : null}
+            {ccd ? (
+              <>
+                <Text style={styles.chartEmptyText}>
+                  {ccd.meta.type}{ccd.meta.date ? `  ·  ${ccd.meta.date}` : ''}
+                  {'  ·  '}{Math.round(ccd.xml.length / 1024)} KB
+                </Text>
+                <TouchableOpacity style={[styles.loadPatientButton, styles.ccdCopyButton]} onPress={handleCopyCCD}>
+                  <Text style={styles.loadPatientButtonText}>Copy Full CCD to Clipboard</Text>
+                </TouchableOpacity>
+                <Text style={styles.ccdPreviewLabel}>Preview (first 2,000 characters):</Text>
+                <Text style={styles.ccdText} selectable>
+                  {ccd.xml.slice(0, 2000)}
+                  {ccd.xml.length > 2000 ? '…' : ''}
+                </Text>
+              </>
+            ) : null}
+          </ScrollView>
+        </SafeAreaView>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -1045,6 +1171,23 @@ const styles = StyleSheet.create({
   modalFooter: { padding: 20, borderTopWidth: 1, borderTopColor: C.border, backgroundColor: C.bg },
   reloadButton: { alignItems: 'center', paddingVertical: 12 },
   reloadButtonText: { color: C.gold, fontSize: 15, fontWeight: '600' },
+
+  // Patient chart modal (Conditions + CCD)
+  chartScrollContent: { padding: 20 },
+  chartSectionTitle: { fontSize: 15, fontWeight: '700', color: C.blue, marginBottom: 10 },
+  chartSpinner: { marginVertical: 12 },
+  chartErrorText: { fontSize: 13, color: C.danger, marginBottom: 8 },
+  chartEmptyText: { fontSize: 13, color: C.textLight, marginBottom: 8 },
+  chartDivider: { height: 1, backgroundColor: C.border, marginVertical: 24 },
+  conditionRow: { paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: C.border },
+  conditionText: { fontSize: 14, fontWeight: '600', color: C.textDark },
+  conditionMeta: { fontSize: 12, color: C.textLight, marginTop: 2 },
+  ccdCopyButton: { marginTop: 8, marginBottom: 16 },
+  ccdPreviewLabel: { fontSize: 12, color: C.textLight, marginBottom: 6 },
+  ccdText: {
+    fontSize: 11, color: C.textMid, fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
+    backgroundColor: C.bg, borderRadius: 8, padding: 12, lineHeight: 16,
+  },
 
   debugLink: { marginBottom: 24, marginTop: -8 },
   debugLinkText: { fontSize: 12, color: C.textLight, textDecorationLine: 'underline' },
