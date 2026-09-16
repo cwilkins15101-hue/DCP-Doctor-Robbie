@@ -211,6 +211,10 @@ export default function App() {
   // Bumped on every submission (first or additional) to restart background
   // polling even if the previous recording's results were already ready.
   const [pollGeneration, setPollGeneration] = useState(0);
+  // Captured right when a recording is submitted — anything already stored
+  // from before this timestamp is a stale result from an earlier recording,
+  // not the update this submission is waiting on.
+  const [lastSubmittedAt, setLastSubmittedAt] = useState(null);
 
   // The note and transcript are delivered as separate, independent
   // notifications (see webhookReceiver.js) — track their readiness
@@ -220,6 +224,14 @@ export default function App() {
   const transcriptResult = findArtifact(artifacts, 'transcript');
   const noteReady = !!noteResult;
   const transcriptReady = !!transcriptResult;
+  // "Current" (drives the status badges/polling) is stricter than "ready"
+  // (drives whether there's anything to show at all) — after an additional
+  // recording, the tabs keep showing the previous note/transcript rather
+  // than blanking, but the badge should go back to "Submitted" until the
+  // actually-updated version lands.
+  const noteIsCurrent = noteReady && (!lastSubmittedAt || new Date(noteResult.storedAt) >= lastSubmittedAt);
+  const transcriptIsCurrent =
+    transcriptReady && (!lastSubmittedAt || new Date(transcriptResult.storedAt) >= lastSubmittedAt);
 
   const pulseAnim = useRef(new Animated.Value(1)).current;
   const timerRef = useRef(null);
@@ -250,9 +262,12 @@ export default function App() {
         const result = await DdeClient.fetchResult(dragonCorrelationId);
         if (!stopped && result) {
           setDragonDdeResult(result);
-          const gotNote = !!findArtifact(result.artifacts, 'encounter_data');
-          const gotTranscript = !!findArtifact(result.artifacts, 'transcript');
-          if (gotNote && gotTranscript) {
+          const note = findArtifact(result.artifacts, 'encounter_data');
+          const transcript = findArtifact(result.artifacts, 'transcript');
+          const noteCurrent = note && (!lastSubmittedAt || new Date(note.storedAt) >= lastSubmittedAt);
+          const transcriptCurrent =
+            transcript && (!lastSubmittedAt || new Date(transcript.storedAt) >= lastSubmittedAt);
+          if (noteCurrent && transcriptCurrent) {
             stopped = true;
             clearInterval(intervalId);
           }
@@ -269,7 +284,7 @@ export default function App() {
       stopped = true;
       clearInterval(intervalId);
     };
-  }, [screen, dragonCorrelationId, pollGeneration]);
+  }, [screen, dragonCorrelationId, pollGeneration, lastSubmittedAt]);
 
   // If the transcript shows up before the note, switch to it automatically
   // so the physician sees it right away instead of a "still processing"
@@ -416,6 +431,7 @@ export default function App() {
         { id: `${correlationId}-${prev.length + 1}`, number: prev.length + 1, submittedAt: new Date(), durationSeconds: duration },
         ...prev,
       ]);
+      setLastSubmittedAt(new Date());
       setPollGeneration((g) => g + 1);
       setScreen('dragonNote');
     } catch (err) {
@@ -588,9 +604,19 @@ export default function App() {
 
             <View style={styles.dragonMainPane}>
               <View style={styles.statusRow}>
-                {renderStatusBadge('Note', noteReady)}
-                {renderStatusBadge('Transcript', transcriptReady)}
+                {renderStatusBadge('Note', noteIsCurrent)}
+                {renderStatusBadge('Transcript', transcriptIsCurrent)}
               </View>
+              {artifacts && (!noteIsCurrent || !transcriptIsCurrent) && (
+                <View style={styles.checkNowRow}>
+                  <TouchableOpacity onPress={handleCheckDdeResult} disabled={dragonDdeChecking}>
+                    <Text style={styles.debugLinkText}>
+                      {dragonDdeChecking ? 'Checking…' : 'Check now for updated results'}
+                    </Text>
+                  </TouchableOpacity>
+                  {!!dragonError && <Text style={styles.dragonErrorText}>{dragonError}</Text>}
+                </View>
+              )}
 
               {artifacts ? (
                 <>
@@ -1031,6 +1057,10 @@ const styles = StyleSheet.create({
   statusRow: {
     flexDirection: 'row', justifyContent: 'center', gap: 24,
     paddingVertical: 12, paddingHorizontal: 16,
+    borderBottomWidth: 1, borderBottomColor: C.border, backgroundColor: C.bg,
+  },
+  checkNowRow: {
+    alignItems: 'center', gap: 4, paddingVertical: 8,
     borderBottomWidth: 1, borderBottomColor: C.border, backgroundColor: C.bg,
   },
   statusItem: { alignItems: 'center', gap: 4 },
