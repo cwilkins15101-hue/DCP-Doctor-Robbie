@@ -114,11 +114,27 @@ test('orchestrates create session -> upload -> end session, and returns the corr
 
   assert.equal(recordedCalls[1].fn, 'uploadRecording');
   assert.equal(recordedCalls[1].args.correlationId, 'corr-42');
+  assert.equal(recordedCalls[1].args.recordingId, 1);
   assert.ok(Buffer.isBuffer(recordedCalls[1].args.audioBuffer));
   assert.equal(recordedCalls[1].args.audioBuffer.length, 4);
 
   assert.equal(recordedCalls[2].fn, 'endAmbientSession');
   assert.equal(recordedCalls[2].correlationId, 'corr-42');
+});
+
+test('passes through a distinct recordingId for an additional recording on the same encounter', async () => {
+  const res = await handler(
+    fakeFormDataRequest({
+      headers: { 'x-app-secret': 'test-app-secret' },
+      fields: { correlationId: 'corr-42', recordingId: '2' },
+      audioBytes: Buffer.from([1, 2]),
+    }),
+    noopContext
+  );
+  assert.equal(res.status, 200);
+  const uploadCall = recordedCalls.find((c) => c.fn === 'uploadRecording');
+  assert.equal(uploadCall.args.correlationId, 'corr-42');
+  assert.equal(uploadCall.args.recordingId, 2);
 });
 
 test('generates a correlationId when none is provided', async () => {

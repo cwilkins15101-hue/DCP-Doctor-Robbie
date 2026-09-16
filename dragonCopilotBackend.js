@@ -46,8 +46,12 @@ function buildContext(patient) {
 // existingCorrelationId to add another recording to an encounter already in
 // progress — Dragon Copilot ties multiple recordings to one encounter by
 // correlation_id (see the Recordings, sessions, and transcript docs) and
-// re-processes the note/transcript across all of them.
-async function submitRecording(audioUri, audioName, patient, existingCorrelationId) {
+// re-processes the note/transcript across all of them. recordingId must be
+// unique per recording within that encounter (1 for the first, 2 for the
+// next, ...) — reusing recordingId 1 looks to Dragon Copilot like
+// re-finalizing the same take rather than a genuinely new one, and silently
+// never triggers a new note/transcript notification.
+async function submitRecording(audioUri, audioName, patient, existingCorrelationId, recordingId = 1) {
   const missing = missingConfigKeys();
   if (missing.length > 0) {
     throw new Error(`Dragon Copilot backend isn't configured: missing ${missing.join(', ')}`);
@@ -65,6 +69,7 @@ async function submitRecording(audioUri, audioName, patient, existingCorrelation
   }
 
   formData.append('correlationId', correlationId);
+  formData.append('recordingId', String(recordingId));
   formData.append('externalUserId', EXTERNAL_USER_ID);
   const context = buildContext(patient);
   if (context) formData.append('context', JSON.stringify(context));

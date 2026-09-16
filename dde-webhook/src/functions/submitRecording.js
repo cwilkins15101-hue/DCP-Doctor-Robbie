@@ -38,6 +38,12 @@ async function handler(request, context) {
   const correlationId = form.get('correlationId') || crypto.randomUUID();
   const externalUserId = form.get('externalUserId') || undefined;
   const ehrInstanceId = form.get('ehrInstanceId') || undefined;
+  // Distinguishes multiple recordings added to the same encounter
+  // (correlationId) — reusing recordingId 1 for a second recording looks
+  // to Dragon Copilot like re-finalizing the same take, which is why a
+  // second recording on an existing encounter never triggered a new
+  // notification. Defaults to 1 for a first/only recording.
+  const recordingId = parseInt(form.get('recordingId'), 10) || 1;
 
   const contextRaw = form.get('context');
   let sessionData;
@@ -56,7 +62,7 @@ async function handler(request, context) {
 
   try {
     await ambientSession.createAmbientSession({ correlationId, externalUserId, data: sessionData, ehrInstanceId });
-    await audioUpload.uploadRecording({ correlationId, audioBuffer, ehrInstanceId, externalUserId });
+    await audioUpload.uploadRecording({ correlationId, audioBuffer, recordingId, ehrInstanceId, externalUserId });
   } catch (err) {
     context.error(`submitRecording failed for correlationId ${correlationId}:`, err);
     return withCors({ status: 502, jsonBody: { error: String(err?.message ?? err) } });

@@ -408,7 +408,8 @@ export default function App() {
         audioUri,
         audioName,
         selectedPatient,
-        dragonCorrelationId
+        dragonCorrelationId,
+        recordings.length + 1
       );
       setDragonCorrelationId(correlationId);
       setRecordings((prev) => [

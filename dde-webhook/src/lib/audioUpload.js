@@ -91,8 +91,10 @@ async function finalizeUpload({ correlationId, recordingId, totalChunks, ehrInst
 
 // Splits a full audio buffer into chunks per AAS's documented rules and
 // uploads them sequentially, then finalizes. recordingId lets one session
-// hold multiple takes; Doctor Robbie only ever sends one, so this always
-// uses recordingId 1 unless told otherwise.
+// (correlationId/encounter) hold multiple takes — Doctor Robbie increments
+// it for each additional recording added to the same encounter; reusing
+// recordingId 1 would look like re-finalizing the same take rather than a
+// new one.
 async function uploadRecording({ correlationId, audioBuffer, recordingId = 1, ehrInstanceId, externalUserId }) {
   // chunkId 1 carries no audio data, per the documented contract.
   await storeChunk({ correlationId, recordingId, chunkId: 1, buffer: null, ehrInstanceId, externalUserId });
