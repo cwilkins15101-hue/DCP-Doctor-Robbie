@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import {
   StyleSheet, Text, View, TouchableOpacity, Animated,
   Alert, Modal, FlatList, SafeAreaView, ScrollView,
-  ActivityIndicator, Platform,
+  ActivityIndicator, Platform, useWindowDimensions,
 } from 'react-native';
 import { Audio } from 'expo-av';
 import * as DocumentPicker from 'expo-document-picker';
@@ -33,6 +33,8 @@ const C = {
   textLight:   '#94A3B8',
   danger:      '#DC2626',
   border:      '#DDE6F0',
+  epicRed:     '#ED1C24',
+  epicRedDark: '#C4151B',
 };
 
 // ---------------------------------------------------------------------------
@@ -170,6 +172,8 @@ function findArtifact(artifacts, keyword) {
 // App
 // ---------------------------------------------------------------------------
 export default function App() {
+  const { width: windowWidth } = useWindowDimensions();
+
   // Screen: 'record' | 'dragonNote'
   const [screen, setScreen] = useState('record');
 
@@ -253,6 +257,22 @@ export default function App() {
 
   const pulseAnim = useRef(new Animated.Value(1)).current;
   const timerRef = useRef(null);
+
+  // Chart panel — slides in from the right rather than taking over the
+  // whole screen, so the recording/patient context stays visible behind it.
+  const chartPanelAnim = useRef(new Animated.Value(0)).current; // 0 = off-screen right, 1 = in view
+  const [chartPanelRendered, setChartPanelRendered] = useState(false);
+
+  useEffect(() => {
+    if (chartModalVisible) {
+      setChartPanelRendered(true);
+      Animated.timing(chartPanelAnim, { toValue: 1, duration: 260, useNativeDriver: true }).start();
+    } else if (chartPanelRendered) {
+      Animated.timing(chartPanelAnim, { toValue: 0, duration: 200, useNativeDriver: true }).start(() => {
+        setChartPanelRendered(false);
+      });
+    }
+  }, [chartModalVisible]);
 
   useEffect(() => {
     (async () => {
@@ -849,10 +869,6 @@ export default function App() {
           <Text style={styles.debugLinkText}>View Log</Text>
         </TouchableOpacity>
 
-        <Text style={styles.pipelineWarning}>
-          Recordings are sent to Dragon Copilot for processing — no transcript review step.
-        </Text>
-
         {/* Patient banner */}
         {selectedPatient ? (
           <TouchableOpacity style={styles.patientBanner} onPress={() => setPatientModalVisible(true)}>
@@ -868,8 +884,8 @@ export default function App() {
         ) : null}
 
         {selectedPatient?.id ? (
-          <TouchableOpacity style={styles.debugLink} onPress={handleViewChart}>
-            <Text style={styles.debugLinkText}>View Chart (Problems & CCD)</Text>
+          <TouchableOpacity style={styles.epicChartButton} onPress={handleViewChart} activeOpacity={0.85}>
+            <Text style={styles.epicChartButtonText}>Epic Chart Summary</Text>
           </TouchableOpacity>
         ) : null}
 
@@ -1045,22 +1061,51 @@ export default function App() {
         </SafeAreaView>
       </Modal>
 
-      {/* Patient chart modal — Conditions (Problems & Reason for Visit) + CCD, from Epic */}
+      {/* Epic Chart Summary — a right-side panel (like an EHR chart review
+          pane) rather than a full-screen takeover, so the recording screen
+          stays visible behind it. */}
       <Modal
-        visible={chartModalVisible}
-        animationType="slide"
-        presentationStyle="pageSheet"
+        visible={chartPanelRendered}
+        transparent
+        animationType="none"
         onRequestClose={() => setChartModalVisible(false)}
       >
-        <SafeAreaView style={styles.modalSafeArea}>
-          <View style={styles.modalHeader}>
-            <Text style={styles.modalTitle}>Patient Chart</Text>
-            <TouchableOpacity onPress={() => setChartModalVisible(false)}>
-              <Text style={styles.modalClose}>Done</Text>
-            </TouchableOpacity>
-          </View>
+        <View style={styles.chartOverlay}>
+          <TouchableOpacity
+            style={styles.chartBackdrop}
+            activeOpacity={1}
+            onPress={() => setChartModalVisible(false)}
+          />
+          <Animated.View
+            style={[
+              styles.chartPanel,
+              {
+                width: Math.min(440, windowWidth * 0.92),
+                transform: [
+                  {
+                    translateX: chartPanelAnim.interpolate({
+                      inputRange: [0, 1],
+                      outputRange: [Math.min(440, windowWidth * 0.92), 0],
+                    }),
+                  },
+                ],
+              },
+            ]}
+          >
+            <SafeAreaView style={styles.chartPanelSafeArea}>
+              <View style={styles.chartPanelHeader}>
+                <View style={styles.chartPanelHeaderLeft}>
+                  <View style={styles.chartPanelHeaderBadge}>
+                    <Text style={styles.chartPanelHeaderBadgeText}>Epic</Text>
+                  </View>
+                  <Text style={styles.chartPanelTitle}>Chart Summary</Text>
+                </View>
+                <TouchableOpacity onPress={() => setChartModalVisible(false)}>
+                  <Text style={styles.modalClose}>Done</Text>
+                </TouchableOpacity>
+              </View>
 
-          <ScrollView contentContainerStyle={styles.chartScrollContent}>
+              <ScrollView contentContainerStyle={styles.chartScrollContent}>
             <Text style={styles.chartSectionTitle}>Problems & Reason for Visit</Text>
             {loadingConditions ? (
               <ActivityIndicator color={C.blue} style={styles.chartSpinner} />
@@ -1155,8 +1200,10 @@ export default function App() {
                 );
               })
             )}
-          </ScrollView>
-        </SafeAreaView>
+              </ScrollView>
+            </SafeAreaView>
+          </Animated.View>
+        </View>
       </Modal>
     </SafeAreaView>
   );
@@ -1172,8 +1219,6 @@ const styles = StyleSheet.create({
 
   title: { fontSize: 30, fontWeight: '800', color: C.blue, letterSpacing: 0.5, marginBottom: 2 },
   subtitle: { fontSize: 13, color: C.textMid, marginBottom: 20, letterSpacing: 0.3 },
-
-  pipelineWarning: { fontSize: 11, color: C.gold, marginTop: 8, marginBottom: 20, textAlign: 'center' },
 
   dragonBody: { padding: 20, flexGrow: 1 },
   dragonCenterBlock: { alignItems: 'center', gap: 16, marginTop: 24 },
@@ -1206,6 +1251,14 @@ const styles = StyleSheet.create({
   patientBannerName: { fontSize: 15, fontWeight: '700', color: C.blue },
   patientBannerSub: { fontSize: 12, color: C.textMid, marginTop: 1 },
   patientBannerChange: { fontSize: 13, color: C.gold, fontWeight: '600' },
+
+  epicChartButton: {
+    flexDirection: 'row', alignSelf: 'flex-start', alignItems: 'center', justifyContent: 'center',
+    backgroundColor: C.epicRed, borderRadius: 20,
+    paddingVertical: 9, paddingHorizontal: 18, marginBottom: 24,
+    shadowColor: C.epicRedDark, shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.3, shadowRadius: 4, elevation: 3,
+  },
+  epicChartButtonText: { color: C.white, fontSize: 13, fontWeight: '700', letterSpacing: 0.2 },
 
   recordingArea: { alignItems: 'center', gap: 20 },
   recordingIndicator: { flexDirection: 'row', alignItems: 'center', gap: 8 },
@@ -1268,7 +1321,24 @@ const styles = StyleSheet.create({
   reloadButton: { alignItems: 'center', paddingVertical: 12 },
   reloadButtonText: { color: C.gold, fontSize: 15, fontWeight: '600' },
 
-  // Patient chart modal (Conditions + CCD)
+  // Epic Chart Summary — right-side slide-in panel (Conditions + CCD + Notes)
+  chartOverlay: { flex: 1, flexDirection: 'row', backgroundColor: 'rgba(11, 31, 58, 0.4)' },
+  chartBackdrop: { flex: 1 },
+  chartPanel: {
+    height: '100%', backgroundColor: C.white,
+    shadowColor: '#000', shadowOffset: { width: -4, height: 0 }, shadowOpacity: 0.2, shadowRadius: 20, elevation: 20,
+  },
+  chartPanelSafeArea: { flex: 1, backgroundColor: C.white },
+  chartPanelHeader: {
+    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
+    paddingHorizontal: 20, paddingVertical: 16,
+    borderBottomWidth: 1, borderBottomColor: C.border,
+    backgroundColor: C.bg,
+  },
+  chartPanelHeaderLeft: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  chartPanelHeaderBadge: { backgroundColor: C.epicRed, borderRadius: 5, paddingVertical: 3, paddingHorizontal: 7 },
+  chartPanelHeaderBadgeText: { color: C.white, fontSize: 12, fontWeight: '800', letterSpacing: 0.3 },
+  chartPanelTitle: { fontSize: 16, fontWeight: '700', color: C.blue },
   chartScrollContent: { padding: 20 },
   chartSectionTitle: { fontSize: 15, fontWeight: '700', color: C.blue, marginBottom: 10 },
   chartSpinner: { marginVertical: 12 },

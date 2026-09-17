@@ -127,16 +127,24 @@ async function fetchAttachmentText(attachment, accessToken) {
 
 // Retrieves this patient's current CCD (Continuity of Care Document) via
 // the DocumentReference $docref operation. Epic generates it on demand and
-// returns a DocumentReference pointing at the document. The `patient`
-// parameter here is a Reference (Parameters-style operation input), not a
-// plain search filter — Epic expects the full "Patient/<id>" form, not the
-// bare id (unlike an ordinary ?patient= search filter, which accepts both).
+// returns a DocumentReference pointing at the document. Invoked as a POST
+// with a Parameters body — the one invocation form every FHIR server must
+// support for an operation — rather than the optional GET+query-string
+// shortcut, which this tenant doesn't seem to accept for $docref.
 async function fetchCCD(patientId) {
   const accessToken = await EpicAuth.getAccessToken();
-  const docRefResponse = await fetch(
-    `${FHIR_BASE_URL}/DocumentReference/$docref?patient=${encodeURIComponent(`Patient/${patientId}`)}`,
-    { headers: { Authorization: `Bearer ${accessToken}`, Accept: 'application/fhir+json' } }
-  );
+  const docRefResponse = await fetch(`${FHIR_BASE_URL}/DocumentReference/$docref`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      Accept: 'application/fhir+json',
+      'Content-Type': 'application/fhir+json',
+    },
+    body: JSON.stringify({
+      resourceType: 'Parameters',
+      parameter: [{ name: 'patient', valueReference: { reference: `Patient/${patientId}` } }],
+    }),
+  });
   if (!docRefResponse.ok) {
     throw new Error(`Epic CCD lookup failed (${docRefResponse.status}): ${await docRefResponse.text()}`);
   }
