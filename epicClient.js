@@ -125,30 +125,47 @@ async function fetchAttachmentText(attachment, accessToken) {
   throw new Error('The document had neither inline data nor a retrievable URL.');
 }
 
+// Pulls the first DocumentReference (with a usable attachment) out of a
+// FHIR search/operation Bundle response.
+function firstDocRefWithAttachment(bundle) {
+  return (bundle.entry ?? [])
+    .map((entry) => entry.resource)
+    .filter((resource) => resource?.resourceType === 'DocumentReference')
+    .find((resource) => resource.content?.[0]?.attachment);
+}
+
 // Retrieves this patient's current CCD (Continuity of Care Document).
-// Epic's own Binary.Read docs point at the ordinary DocumentReference
-// Search interaction ("often through querying for DocumentReference
-// resources through the search interaction") rather than the $docref
-// operation, which never got past a confusing "FHIR ID provided was not
-// found" error no matter how it was invoked. Searching by patient + the
-// CCD's LOINC type code (34133-9, "Summarization of episode note") uses
-// the exact same proven pattern as the Clinical Notes search.
+// Tries the ordinary DocumentReference Search interaction first — Epic's
+// own Binary.Read docs point at it ("often through querying for
+// DocumentReference resources through the search interaction"), and it's
+// the exact same proven pattern as the Clinical Notes search. If nothing
+// is found (Epic may not keep a standing DocumentReference for this
+// category until one is actually generated), falls back to the $docref
+// operation, which exists specifically to generate one on demand.
 async function fetchCCD(patientId) {
   const accessToken = await EpicAuth.getAccessToken();
   const params = new URLSearchParams({
     patient: patientId,
     type: 'http://loinc.org|34133-9',
   });
-  const docRefResponse = await fetch(`${FHIR_BASE_URL}/DocumentReference?${params.toString()}`, {
+  const searchResponse = await fetch(`${FHIR_BASE_URL}/DocumentReference?${params.toString()}`, {
     headers: { Authorization: `Bearer ${accessToken}`, Accept: 'application/fhir+json' },
   });
-  if (!docRefResponse.ok) {
-    throw new Error(`Epic CCD lookup failed (${docRefResponse.status}): ${await docRefResponse.text()}`);
+  if (!searchResponse.ok) {
+    throw new Error(`Epic CCD lookup failed (${searchResponse.status}): ${await searchResponse.text()}`);
   }
-  const bundle = await docRefResponse.json();
-  const docRef = (bundle.entry ?? [])
-    .map((entry) => entry.resource)
-    .find((resource) => resource?.resourceType === 'DocumentReference');
+  let docRef = firstDocRefWithAttachment(await searchResponse.json());
+
+  if (!docRef) {
+    const docrefResponse = await fetch(
+      `${FHIR_BASE_URL}/DocumentReference/$docref?${params.toString()}`,
+      { headers: { Authorization: `Bearer ${accessToken}`, Accept: 'application/fhir+json' } }
+    );
+    if (docrefResponse.ok) {
+      docRef = firstDocRefWithAttachment(await docrefResponse.json());
+    }
+  }
+
   const attachment = docRef?.content?.[0]?.attachment;
   if (!attachment) {
     throw new Error('Epic did not return a CCD document for this patient.');
