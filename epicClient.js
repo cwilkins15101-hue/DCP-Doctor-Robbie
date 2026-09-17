@@ -143,23 +143,31 @@ async function fetchIPS(patientId) {
     throw new Error(`Epic IPS lookup failed (${response.status}): ${await response.text()}`);
   }
   const bundle = await response.json();
-  const composition = (bundle.entry ?? [])
-    .map((entry) => entry.resource)
-    .find((resource) => resource?.resourceType === 'Composition');
+  const resources = (bundle.entry ?? []).map((entry) => entry.resource);
+  const composition = resources.find((resource) => resource?.resourceType === 'Composition');
   if (!composition) {
     throw new Error('Epic did not return an International Patient Summary for this patient.');
   }
+  const patientResource = resources.find((resource) => resource?.resourceType === 'Patient');
 
-  return {
-    generatedAt: bundle.timestamp ?? composition.date ?? '',
-    sections: (composition.section ?? [])
+  const sections = [];
+  if (composition.text?.div) {
+    sections.push({ id: 'document-overview', title: 'Document Overview', html: composition.text.div });
+  }
+  if (patientResource?.text?.div) {
+    sections.push({ id: 'patient-summary', title: 'Patient Summary', html: patientResource.text.div });
+  }
+  sections.push(
+    ...(composition.section ?? [])
       .filter((section) => section.text?.div)
       .map((section, index) => ({
         id: `${index}-${section.title ?? 'section'}`,
         title: section.title ?? 'Section',
         html: section.text.div,
-      })),
-  };
+      }))
+  );
+
+  return { generatedAt: bundle.timestamp ?? composition.date ?? '', sections };
 }
 
 // Converts a FHIR DocumentReference (Clinical Notes category) into a flat
