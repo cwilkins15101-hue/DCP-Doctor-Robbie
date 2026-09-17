@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import {
   StyleSheet, Text, View, TouchableOpacity, Animated,
   Alert, Modal, FlatList, SafeAreaView, ScrollView,
-  ActivityIndicator, Platform, useWindowDimensions,
+  ActivityIndicator, Platform, useWindowDimensions, Image,
 } from 'react-native';
 import { Audio } from 'expo-av';
 import * as DocumentPicker from 'expo-document-picker';
@@ -233,6 +233,14 @@ export default function App() {
   const [noteTexts, setNoteTexts] = useState({}); // { [noteId]: { loading, text, error } }
   const [compilingForDragon, setCompilingForDragon] = useState(false);
 
+  // Dragon Copilot Summary — a left-side slide-in panel showing the
+  // compiled IPS + Clinical Notes text (mirrors the Epic Chart Summary
+  // panel's pattern, sliding in from the opposite edge).
+  const [dragonSummaryVisible, setDragonSummaryVisible] = useState(false);
+  const [dragonSummaryText, setDragonSummaryText] = useState('');
+  const [dragonSummaryError, setDragonSummaryError] = useState('');
+  const [dragonSummaryCopied, setDragonSummaryCopied] = useState(false);
+
   // Dragon Copilot submission
   const [submitting, setSubmitting] = useState(false);
   const [submitStep, setSubmitStep] = useState('');
@@ -313,6 +321,23 @@ export default function App() {
       });
     }
   }, [patientModalVisible]);
+
+  // Dragon Copilot Summary panel — slides in from the left (the opposite
+  // edge from the Epic panels), so toValue 1 maps to translateX 0 the same
+  // way, but the JSX below interpolates outputRange from the negative side.
+  const dragonSummaryPanelAnim = useRef(new Animated.Value(0)).current;
+  const [dragonSummaryPanelRendered, setDragonSummaryPanelRendered] = useState(false);
+
+  useEffect(() => {
+    if (dragonSummaryVisible) {
+      setDragonSummaryPanelRendered(true);
+      Animated.timing(dragonSummaryPanelAnim, { toValue: 1, duration: 260, useNativeDriver: true }).start();
+    } else if (dragonSummaryPanelRendered) {
+      Animated.timing(dragonSummaryPanelAnim, { toValue: 0, duration: 200, useNativeDriver: true }).start(() => {
+        setDragonSummaryPanelRendered(false);
+      });
+    }
+  }, [dragonSummaryVisible]);
 
   useEffect(() => {
     (async () => {
@@ -581,14 +606,19 @@ export default function App() {
   }
 
   // Pulls the International Patient Summary and every clinical note's text
-  // into one plain-text block, ready to paste into Dragon Copilot Chat
-  // (a separate app — there's no API for this, so the clipboard is the
-  // hand-off point). Fetches whatever hasn't been loaded yet (IPS, and any
+  // into one clean, readable document and shows it in the Dragon Copilot
+  // Summary panel — meant to be copied from there into Dragon Copilot Chat
+  // (a separate app with no API for this, so a plain-text hand-off is the
+  // only option). Fetches whatever hasn't been loaded yet (IPS, and any
   // note bodies the physician hasn't tapped into) rather than requiring
   // every section to already be open.
   async function handleCompileForDragon() {
     if (!selectedPatient?.id) return;
     setCompilingForDragon(true);
+    setDragonSummaryError('');
+    setDragonSummaryText('');
+    setDragonSummaryCopied(false);
+    setDragonSummaryVisible(true);
     try {
       let ipsData = ips;
       if (!ipsData) {
@@ -613,37 +643,42 @@ export default function App() {
       }
       setNoteTexts(updatedNoteTexts);
 
-      const parts = [`Patient: ${patientDisplayName(selectedPatient)}`];
-      if (patientSubtitle(selectedPatient)) parts.push(patientSubtitle(selectedPatient));
-      parts.push('');
+      const HEAVY_RULE = '='.repeat(44);
+      const LIGHT_RULE = '-'.repeat(30);
+      const patientLine = [patientDisplayName(selectedPatient), patientSubtitle(selectedPatient)]
+        .filter(Boolean)
+        .join('  ·  ');
+      const parts = ['DRAGON COPILOT SUMMARY', '', patientLine, `Compiled ${new Date().toLocaleString()}`, ''];
 
       if (ipsData?.sections?.length) {
-        parts.push('=== International Patient Summary ===', '');
+        parts.push(HEAVY_RULE, 'INTERNATIONAL PATIENT SUMMARY', HEAVY_RULE, '');
         for (const section of ipsData.sections) {
-          parts.push(`-- ${section.title} --`, htmlToPlainText(section.html), '');
+          parts.push(section.title.toUpperCase(), LIGHT_RULE, htmlToPlainText(section.html), '');
         }
       }
 
       if (clinicalNotes.length) {
-        parts.push('=== Clinical Notes ===', '');
+        parts.push(HEAVY_RULE, 'CLINICAL NOTES', HEAVY_RULE, '');
         for (const note of clinicalNotes) {
           const entry = updatedNoteTexts[note.id];
           const heading = [note.title, note.author, note.date].filter(Boolean).join('  ·  ');
-          parts.push(`-- ${heading} --`, entry?.text ? htmlToPlainText(entry.text) : '[content unavailable]', '');
+          parts.push(heading, LIGHT_RULE, entry?.text ? htmlToPlainText(entry.text) : '[content unavailable]', '');
         }
       }
 
-      const compiled = parts.join('\n').trim();
-      await Clipboard.setStringAsync(compiled);
-      Alert.alert(
-        'Copied for Dragon Copilot',
-        'The patient summary and clinical notes were compiled and copied to your clipboard — paste into Dragon Copilot Chat.'
-      );
+      setDragonSummaryText(parts.join('\n').trim());
     } catch (err) {
-      Alert.alert('Compile failed', String(err?.message ?? err));
+      setDragonSummaryError(String(err?.message ?? err));
     } finally {
       setCompilingForDragon(false);
     }
+  }
+
+  async function handleCopyDragonSummary() {
+    if (!dragonSummaryText) return;
+    await Clipboard.setStringAsync(dragonSummaryText);
+    setDragonSummaryCopied(true);
+    setTimeout(() => setDragonSummaryCopied(false), 2000);
   }
 
   function handleDiscard() {
@@ -1364,6 +1399,78 @@ export default function App() {
           </Animated.View>
         </View>
       </Modal>
+
+      {/* Dragon Copilot Summary — a left-side slide-in panel (opposite edge
+          from the Epic panels) showing the compiled IPS + Clinical Notes
+          text, ready to copy into Dragon Copilot Chat. */}
+      <Modal
+        visible={dragonSummaryPanelRendered}
+        transparent
+        animationType="none"
+        onRequestClose={() => setDragonSummaryVisible(false)}
+      >
+        <View style={styles.chartOverlay}>
+          <Animated.View
+            style={[
+              styles.chartPanel,
+              {
+                width: panelWidth,
+                transform: [
+                  {
+                    translateX: dragonSummaryPanelAnim.interpolate({
+                      inputRange: [0, 1],
+                      outputRange: [-panelWidth, 0],
+                    }),
+                  },
+                ],
+              },
+            ]}
+          >
+            <SafeAreaView style={styles.chartPanelSafeArea}>
+              <View style={styles.chartPanelHeader}>
+                <View style={styles.chartPanelHeaderLeft}>
+                  <Image source={require('./assets/DCP_Flame.png')} style={styles.dragonBadgeIcon} />
+                  <Text style={styles.chartPanelTitle}>Dragon Copilot Summary</Text>
+                </View>
+                <TouchableOpacity onPress={() => setDragonSummaryVisible(false)}>
+                  <Text style={styles.modalClose}>Done</Text>
+                </TouchableOpacity>
+              </View>
+
+              <ScrollView contentContainerStyle={styles.chartScrollContent}>
+                {compilingForDragon ? (
+                  <ActivityIndicator color={C.blue} style={styles.chartSpinner} />
+                ) : null}
+                {dragonSummaryError ? (
+                  <Text style={styles.chartErrorText}>{dragonSummaryError}</Text>
+                ) : null}
+                {dragonSummaryText ? (
+                  <>
+                    <TouchableOpacity
+                      style={[styles.loadPatientButton, styles.copyButtonSpacing]}
+                      onPress={handleCopyDragonSummary}
+                    >
+                      <Text style={styles.loadPatientButtonText}>
+                        {dragonSummaryCopied ? 'Copied ✓' : 'Copy to Clipboard'}
+                      </Text>
+                    </TouchableOpacity>
+                    <View style={styles.noteHtmlBox}>
+                      <Text style={styles.dragonSummaryText} selectable>
+                        {dragonSummaryText}
+                      </Text>
+                    </View>
+                  </>
+                ) : null}
+              </ScrollView>
+            </SafeAreaView>
+          </Animated.View>
+          <TouchableOpacity
+            style={styles.chartBackdrop}
+            activeOpacity={1}
+            onPress={() => setDragonSummaryVisible(false)}
+          />
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -1513,6 +1620,8 @@ const styles = StyleSheet.create({
   chartPanelTitle: { fontSize: 16, fontWeight: '700', color: C.blue },
   localPanelHeaderBadge: { borderWidth: 1.5, borderColor: C.gold, borderRadius: 5, paddingVertical: 2, paddingHorizontal: 6 },
   localPanelHeaderBadgeText: { color: C.blue, fontSize: 12, fontWeight: '800', letterSpacing: 0.3 },
+  dragonBadgeIcon: { width: 22, height: 22 },
+  dragonSummaryText: { fontSize: 12, color: C.textDark, lineHeight: 18 },
   chartScrollContent: { padding: 20 },
   compileButton: { marginBottom: 24 },
   chartSectionTitle: { fontSize: 15, fontWeight: '700', color: C.blue, marginBottom: 10 },
