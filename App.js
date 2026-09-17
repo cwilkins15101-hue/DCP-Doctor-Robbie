@@ -891,18 +891,19 @@ export default function App() {
 
         {!selectedPatient && (
           <View style={styles.patientSourceRow}>
-            <TouchableOpacity style={[styles.loadPatientButton, styles.patientSourceButton]} onPress={loadPatientList}>
-              <Text style={styles.loadPatientButtonText}>Load Patient List</Text>
+            <TouchableOpacity style={[styles.localPatientListButton, styles.patientSourceButton]} onPress={loadPatientList}>
+              <Text style={styles.localPatientListButtonText}>Local Patient List</Text>
             </TouchableOpacity>
             <TouchableOpacity
-              style={[styles.loadPatientButton, styles.patientSourceButton, loadingEpicPatients && styles.buttonDisabled]}
+              style={[styles.epicPatientListButton, styles.patientSourceButton, loadingEpicPatients && styles.buttonDisabled]}
               onPress={handleLoadEpicPatients}
               disabled={loadingEpicPatients}
+              activeOpacity={0.85}
             >
               {loadingEpicPatients ? (
-                <ActivityIndicator color={C.blue} size="small" />
+                <ActivityIndicator color={C.white} size="small" />
               ) : (
-                <Text style={styles.loadPatientButtonText}>Get Patients from Epic</Text>
+                <Text style={styles.epicPatientListButtonText}>Epic Patient List</Text>
               )}
             </TouchableOpacity>
           </View>
@@ -1240,6 +1241,20 @@ const styles = StyleSheet.create({
     backgroundColor: C.goldLight, alignItems: 'center',
   },
   loadPatientButtonText: { color: C.blue, fontSize: 13, fontWeight: '700', textAlign: 'center' },
+
+  localPatientListButton: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+    backgroundColor: C.white, borderRadius: 20, borderWidth: 1.5, borderColor: C.gold,
+    paddingVertical: 9, paddingHorizontal: 18,
+  },
+  localPatientListButtonText: { color: C.blue, fontSize: 13, fontWeight: '700', letterSpacing: 0.2 },
+  epicPatientListButton: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+    backgroundColor: C.epicRed, borderRadius: 20,
+    paddingVertical: 9, paddingHorizontal: 18,
+    shadowColor: C.epicRedDark, shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.3, shadowRadius: 4, elevation: 3,
+  },
+  epicPatientListButtonText: { color: C.white, fontSize: 13, fontWeight: '700', letterSpacing: 0.2 },
 
   patientBanner: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
