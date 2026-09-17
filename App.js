@@ -191,6 +191,7 @@ export default function App() {
   const [patients, setPatients] = useState([]);
   const [selectedPatient, setSelectedPatient] = useState(null);
   const [patientModalVisible, setPatientModalVisible] = useState(false);
+  const [patientListSource, setPatientListSource] = useState('local'); // 'local' | 'epic' — drives the panel header
   const [loadingEpicPatients, setLoadingEpicPatients] = useState(false);
 
   // Epic patient chart (Conditions + CCD) — only available for patients
@@ -273,6 +274,21 @@ export default function App() {
       });
     }
   }, [chartModalVisible]);
+
+  // Patient list panel — same right-side slide-in treatment as the chart panel.
+  const patientPanelAnim = useRef(new Animated.Value(0)).current;
+  const [patientPanelRendered, setPatientPanelRendered] = useState(false);
+
+  useEffect(() => {
+    if (patientModalVisible) {
+      setPatientPanelRendered(true);
+      Animated.timing(patientPanelAnim, { toValue: 1, duration: 260, useNativeDriver: true }).start();
+    } else if (patientPanelRendered) {
+      Animated.timing(patientPanelAnim, { toValue: 0, duration: 200, useNativeDriver: true }).start(() => {
+        setPatientPanelRendered(false);
+      });
+    }
+  }, [patientModalVisible]);
 
   useEffect(() => {
     (async () => {
@@ -429,6 +445,7 @@ export default function App() {
           return;
         }
         setPatients(parsed);
+        setPatientListSource('local');
         setPatientModalVisible(true);
       }
     } catch (err) {
@@ -448,6 +465,7 @@ export default function App() {
     try {
       const epicPatients = await EpicClient.fetchSandboxPatients();
       setPatients(epicPatients);
+      setPatientListSource('epic');
       setPatientModalVisible(true);
     } catch (err) {
       Alert.alert('Epic sign-in failed', String(err?.message ?? err));
@@ -891,11 +909,11 @@ export default function App() {
 
         {!selectedPatient && (
           <View style={styles.patientSourceRow}>
-            <TouchableOpacity style={[styles.localPatientListButton, styles.patientSourceButton]} onPress={loadPatientList}>
+            <TouchableOpacity style={styles.localPatientListButton} onPress={loadPatientList}>
               <Text style={styles.localPatientListButtonText}>Local Patient List</Text>
             </TouchableOpacity>
             <TouchableOpacity
-              style={[styles.epicPatientListButton, styles.patientSourceButton, loadingEpicPatients && styles.buttonDisabled]}
+              style={[styles.epicPatientListButton, loadingEpicPatients && styles.buttonDisabled]}
               onPress={handleLoadEpicPatients}
               disabled={loadingEpicPatients}
               activeOpacity={0.85}
@@ -1018,48 +1036,87 @@ export default function App() {
         </SafeAreaView>
       </Modal>
 
-      {/* Patient list modal */}
+      {/* Patient list panel — same right-side slide-in treatment as the
+          Epic Chart Summary panel, with a header that reflects whichever
+          source (Epic or a local CSV) the list came from. */}
       <Modal
-        visible={patientModalVisible}
-        animationType="slide"
-        presentationStyle="pageSheet"
+        visible={patientPanelRendered}
+        transparent
+        animationType="none"
         onRequestClose={() => setPatientModalVisible(false)}
       >
-        <SafeAreaView style={styles.modalSafeArea}>
-          <View style={styles.modalHeader}>
-            <Text style={styles.modalTitle}>Select Patient</Text>
-            <TouchableOpacity onPress={() => setPatientModalVisible(false)}>
-              <Text style={styles.modalClose}>Done</Text>
-            </TouchableOpacity>
-          </View>
-
-          <FlatList
-            data={patients}
-            keyExtractor={(_, i) => String(i)}
-            contentContainerStyle={styles.patientList}
-            ItemSeparatorComponent={() => <View style={styles.listSeparator} />}
-            renderItem={({ item }) => (
-              <TouchableOpacity
-                style={[styles.patientRow, selectedPatient === item && styles.patientRowSelected]}
-                onPress={() => selectPatient(item)}
-              >
-                <Text style={styles.patientRowName}>{patientDisplayName(item)}</Text>
-                {patientSubtitle(item) ? (
-                  <Text style={styles.patientRowDetail}>{patientSubtitle(item)}</Text>
-                ) : null}
-                {patientVisitInfo(item) ? (
-                  <Text style={styles.patientRowVisit}>{patientVisitInfo(item)}</Text>
-                ) : null}
-              </TouchableOpacity>
-            )}
+        <View style={styles.chartOverlay}>
+          <TouchableOpacity
+            style={styles.chartBackdrop}
+            activeOpacity={1}
+            onPress={() => setPatientModalVisible(false)}
           />
+          <Animated.View
+            style={[
+              styles.chartPanel,
+              {
+                width: Math.min(440, windowWidth * 0.92),
+                transform: [
+                  {
+                    translateX: patientPanelAnim.interpolate({
+                      inputRange: [0, 1],
+                      outputRange: [Math.min(440, windowWidth * 0.92), 0],
+                    }),
+                  },
+                ],
+              },
+            ]}
+          >
+            <SafeAreaView style={styles.chartPanelSafeArea}>
+              <View style={styles.chartPanelHeader}>
+                <View style={styles.chartPanelHeaderLeft}>
+                  {patientListSource === 'epic' ? (
+                    <View style={styles.chartPanelHeaderBadge}>
+                      <Text style={styles.chartPanelHeaderBadgeText}>Epic</Text>
+                    </View>
+                  ) : (
+                    <View style={styles.localPanelHeaderBadge}>
+                      <Text style={styles.localPanelHeaderBadgeText}>Local</Text>
+                    </View>
+                  )}
+                  <Text style={styles.chartPanelTitle}>Patient List</Text>
+                </View>
+                <TouchableOpacity onPress={() => setPatientModalVisible(false)}>
+                  <Text style={styles.modalClose}>Done</Text>
+                </TouchableOpacity>
+              </View>
 
-          <View style={styles.modalFooter}>
-            <TouchableOpacity style={styles.reloadButton} onPress={loadPatientList}>
-              <Text style={styles.reloadButtonText}>Load Different File</Text>
-            </TouchableOpacity>
-          </View>
-        </SafeAreaView>
+              <FlatList
+                data={patients}
+                keyExtractor={(_, i) => String(i)}
+                contentContainerStyle={styles.patientList}
+                ItemSeparatorComponent={() => <View style={styles.listSeparator} />}
+                renderItem={({ item }) => (
+                  <TouchableOpacity
+                    style={[styles.patientRow, selectedPatient === item && styles.patientRowSelected]}
+                    onPress={() => selectPatient(item)}
+                  >
+                    <Text style={styles.patientRowName}>{patientDisplayName(item)}</Text>
+                    {patientSubtitle(item) ? (
+                      <Text style={styles.patientRowDetail}>{patientSubtitle(item)}</Text>
+                    ) : null}
+                    {patientVisitInfo(item) ? (
+                      <Text style={styles.patientRowVisit}>{patientVisitInfo(item)}</Text>
+                    ) : null}
+                  </TouchableOpacity>
+                )}
+              />
+
+              {patientListSource === 'local' ? (
+                <View style={styles.modalFooter}>
+                  <TouchableOpacity style={styles.reloadButton} onPress={loadPatientList}>
+                    <Text style={styles.reloadButtonText}>Load Different File</Text>
+                  </TouchableOpacity>
+                </View>
+              ) : null}
+            </SafeAreaView>
+          </Animated.View>
+        </View>
       </Modal>
 
       {/* Epic Chart Summary — a right-side panel (like an EHR chart review
@@ -1233,8 +1290,7 @@ const styles = StyleSheet.create({
   dragonWarningText: { fontSize: 13, color: C.textMid, marginBottom: 4 },
   dragonWarningItem: { fontSize: 12, color: C.textDark, fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace' },
 
-  patientSourceRow: { flexDirection: 'row', gap: 10, marginBottom: 32, width: '100%' },
-  patientSourceButton: { flex: 1 },
+  patientSourceRow: { flexDirection: 'row', gap: 10, marginBottom: 32 },
   loadPatientButton: {
     borderWidth: 1.5, borderColor: C.gold, borderStyle: 'dashed',
     paddingVertical: 10, paddingHorizontal: 16, borderRadius: 10,
@@ -1354,6 +1410,8 @@ const styles = StyleSheet.create({
   chartPanelHeaderBadge: { backgroundColor: C.epicRed, borderRadius: 5, paddingVertical: 3, paddingHorizontal: 7 },
   chartPanelHeaderBadgeText: { color: C.white, fontSize: 12, fontWeight: '800', letterSpacing: 0.3 },
   chartPanelTitle: { fontSize: 16, fontWeight: '700', color: C.blue },
+  localPanelHeaderBadge: { borderWidth: 1.5, borderColor: C.gold, borderRadius: 5, paddingVertical: 2, paddingHorizontal: 6 },
+  localPanelHeaderBadgeText: { color: C.blue, fontSize: 12, fontWeight: '800', letterSpacing: 0.3 },
   chartScrollContent: { padding: 20 },
   chartSectionTitle: { fontSize: 15, fontWeight: '700', color: C.blue, marginBottom: 10 },
   chartSpinner: { marginVertical: 12 },
