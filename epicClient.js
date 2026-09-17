@@ -127,23 +127,19 @@ async function fetchAttachmentText(attachment, accessToken) {
 
 // Retrieves this patient's current CCD (Continuity of Care Document) via
 // the DocumentReference $docref operation. Epic generates it on demand and
-// returns a DocumentReference pointing at the document. Invoked as a POST
-// with a Parameters body — the one invocation form every FHIR server must
-// support for an operation — rather than the optional GET+query-string
-// shortcut, which this tenant doesn't seem to accept for $docref.
+// returns a DocumentReference pointing at the document. Explicitly asks
+// for the CCD by its standard LOINC type code (34133-9, "Summarization of
+// episode note") — omitting `type` seemed to make Epic fail an internal
+// lookup for a default document type, surfaced as a confusing "FHIR ID
+// provided was not found" error.
 async function fetchCCD(patientId) {
   const accessToken = await EpicAuth.getAccessToken();
-  const docRefResponse = await fetch(`${FHIR_BASE_URL}/DocumentReference/$docref`, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-      Accept: 'application/fhir+json',
-      'Content-Type': 'application/fhir+json',
-    },
-    body: JSON.stringify({
-      resourceType: 'Parameters',
-      parameter: [{ name: 'patient', valueReference: { reference: `Patient/${patientId}` } }],
-    }),
+  const params = new URLSearchParams({
+    patient: patientId,
+    type: 'http://loinc.org|34133-9',
+  });
+  const docRefResponse = await fetch(`${FHIR_BASE_URL}/DocumentReference/$docref?${params.toString()}`, {
+    headers: { Authorization: `Bearer ${accessToken}`, Accept: 'application/fhir+json' },
   });
   if (!docRefResponse.ok) {
     throw new Error(`Epic CCD lookup failed (${docRefResponse.status}): ${await docRefResponse.text()}`);
