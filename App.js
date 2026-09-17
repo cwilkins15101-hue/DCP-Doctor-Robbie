@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import {
   StyleSheet, Text, View, TouchableOpacity, Animated,
   Alert, Modal, FlatList, SafeAreaView, ScrollView,
-  ActivityIndicator, Platform, useWindowDimensions, Image,
+  ActivityIndicator, Platform, useWindowDimensions, Image, TextInput,
 } from 'react-native';
 import { Audio } from 'expo-av';
 import * as DocumentPicker from 'expo-document-picker';
@@ -1454,11 +1454,14 @@ export default function App() {
                         {dragonSummaryCopied ? 'Copied ✓' : 'Copy to Clipboard'}
                       </Text>
                     </TouchableOpacity>
-                    <View style={styles.noteHtmlBox}>
-                      <Text style={styles.dragonSummaryText} selectable>
-                        {dragonSummaryText}
-                      </Text>
-                    </View>
+                    <TextInput
+                      style={[styles.noteHtmlBox, styles.dragonSummaryInput]}
+                      value={dragonSummaryText}
+                      onChangeText={setDragonSummaryText}
+                      multiline
+                      scrollEnabled={false}
+                      textAlignVertical="top"
+                    />
                   </>
                 ) : null}
               </ScrollView>
@@ -1621,7 +1624,7 @@ const styles = StyleSheet.create({
   localPanelHeaderBadge: { borderWidth: 1.5, borderColor: C.gold, borderRadius: 5, paddingVertical: 2, paddingHorizontal: 6 },
   localPanelHeaderBadgeText: { color: C.blue, fontSize: 12, fontWeight: '800', letterSpacing: 0.3 },
   dragonBadgeIcon: { width: 22, height: 22 },
-  dragonSummaryText: { fontSize: 12, color: C.textDark, lineHeight: 18 },
+  dragonSummaryInput: { fontSize: 12, color: C.textDark, lineHeight: 18, minHeight: 400 },
   chartScrollContent: { padding: 20 },
   compileButton: { marginBottom: 24 },
   chartSectionTitle: { fontSize: 15, fontWeight: '700', color: C.blue, marginBottom: 10 },
