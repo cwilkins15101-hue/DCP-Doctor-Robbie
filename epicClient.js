@@ -154,7 +154,9 @@ async function fetchCCD(patientId) {
   if (!searchResponse.ok) {
     throw new Error(`Epic CCD lookup failed (${searchResponse.status}): ${await searchResponse.text()}`);
   }
-  let docRef = firstDocRefWithAttachment(await searchResponse.json());
+  const searchBundle = await searchResponse.json();
+  let docRef = firstDocRefWithAttachment(searchBundle);
+  let docrefDetail = '';
 
   if (!docRef) {
     const docrefResponse = await fetch(
@@ -163,12 +165,16 @@ async function fetchCCD(patientId) {
     );
     if (docrefResponse.ok) {
       docRef = firstDocRefWithAttachment(await docrefResponse.json());
+      if (!docRef) docrefDetail = '$docref succeeded but returned no DocumentReference with an attachment.';
+    } else {
+      docrefDetail = `$docref fallback also failed (${docrefResponse.status}): ${await docrefResponse.text()}`;
     }
   }
 
   const attachment = docRef?.content?.[0]?.attachment;
   if (!attachment) {
-    throw new Error('Epic did not return a CCD document for this patient.');
+    const searchDetail = `Search returned ${searchBundle.total ?? (searchBundle.entry ?? []).length} entries.`;
+    throw new Error(`Epic did not return a CCD document for this patient. ${searchDetail} ${docrefDetail}`.trim());
   }
 
   const meta = {
