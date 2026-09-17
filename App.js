@@ -169,6 +169,20 @@ function findArtifact(artifacts, keyword) {
   );
 }
 
+// React Native's Alert.alert doesn't reliably show anything on the web
+// build (Alert has no real web implementation) — every plain title+message
+// confirmation/error in this app goes through here instead, falling back
+// to a real Alert on native platforms where it does work.
+function notify(title, message) {
+  if (Platform.OS === 'web') {
+    if (typeof window !== 'undefined' && window.alert) {
+      window.alert(message ? `${title}\n\n${message}` : title);
+    }
+    return;
+  }
+  Alert.alert(title, message);
+}
+
 // Converts Epic's narrative HTML (IPS sections, clinical notes) into plain,
 // readable text — good enough for pasting into a chat tool like Dragon
 // Copilot Chat, which doesn't render HTML.
@@ -209,6 +223,7 @@ export default function App() {
   const [duration, setDuration] = useState(0);
   const [audioUri, setAudioUri] = useState(null);
   const [audioName, setAudioName] = useState(null);
+  const [audioSource, setAudioSource] = useState(null); // 'mic' | 'upload' — mic audio auto-submits on stop
 
   // Patient list
   const [patients, setPatients] = useState([]);
@@ -441,10 +456,17 @@ export default function App() {
       await recording.stopAndUnloadAsync();
       await Audio.setAudioModeAsync({ allowsRecordingIOS: false });
       const uri = recording.getURI();
+      const name = 'Recording.m4a';
       setAudioUri(uri);
-      setAudioName('Recording.m4a');
+      setAudioName(name);
+      setAudioSource('mic');
       setRecording(null);
       setIsRecording(false);
+      // Mic recordings send themselves the moment you stop — no separate
+      // submit tap. Passing uri/name directly (rather than relying on the
+      // audioUri/audioName state just set above) avoids using stale values
+      // from before this render commits.
+      await submitAudioToDragon(uri, name);
     } catch (err) {
       console.error('Failed to stop recording:', err);
     }
@@ -469,10 +491,11 @@ export default function App() {
         if (isRecording) await stopRecording();
         setAudioUri(file.uri);
         setAudioName(file.name);
+        setAudioSource('upload');
         setDuration(0);
       }
     } catch (err) {
-      Alert.alert('Error', 'Could not pick file: ' + err.message);
+      notify('Error', 'Could not pick file: ' + err.message);
     }
   }
 
@@ -490,7 +513,7 @@ export default function App() {
         const text = await response.text();
         const parsed = parseCSV(text);
         if (parsed.length === 0) {
-          Alert.alert('Empty file', 'No patient records found in the CSV.');
+          notify('Empty file', 'No patient records found in the CSV.');
           return;
         }
         setPatients(parsed);
@@ -498,7 +521,7 @@ export default function App() {
         setPatientModalVisible(true);
       }
     } catch (err) {
-      Alert.alert('Error', 'Could not load patient list: ' + err.message);
+      notify('Error', 'Could not load patient list: ' + err.message);
     }
   }
 
@@ -507,7 +530,7 @@ export default function App() {
   async function handleLoadEpicPatients() {
     const missing = EpicClient.missingConfigKeys();
     if (missing.length > 0) {
-      Alert.alert('Epic isn’t configured', `Add these to your .env file: ${missing.join(', ')}`);
+      notify('Epic isn’t configured', `Add these to your .env file: ${missing.join(', ')}`);
       return;
     }
     setLoadingEpicPatients(true);
@@ -517,7 +540,7 @@ export default function App() {
       setPatientListSource('epic');
       setPatientModalVisible(true);
     } catch (err) {
-      Alert.alert('Epic sign-in failed', String(err?.message ?? err));
+      notify('Epic sign-in failed', String(err?.message ?? err));
     } finally {
       setLoadingEpicPatients(false);
     }
@@ -602,7 +625,7 @@ export default function App() {
     const entry = noteTexts[note.id];
     if (!entry?.text) return;
     await Clipboard.setStringAsync(htmlToPlainText(entry.text));
-    Alert.alert('Copied', 'The note text was copied to your clipboard.');
+    notify('Copied', 'The note text was copied to your clipboard.');
   }
 
   // Pulls the International Patient Summary and every clinical note's text
@@ -684,12 +707,18 @@ export default function App() {
   function handleDiscard() {
     setAudioUri(null);
     setAudioName(null);
+    setAudioSource(null);
     setDuration(0);
   }
 
   // ---- Dragon Copilot submission ----
 
-  async function handleDragonSubmitRecording() {
+  // Shared by both the mic-recording flow (auto-submits the instant you
+  // stop, via stopRecording) and the upload-file flow (manual submit
+  // button below) — takes the audio uri/name explicitly rather than
+  // reading them from state, since stopRecording calls this right after
+  // setting that state, before the state update has actually committed.
+  async function submitAudioToDragon(uri, name) {
     setDragonError('');
     setSubmitting(true);
     setSubmitStep('Sending to Dragon Copilot…');
@@ -700,8 +729,8 @@ export default function App() {
       // showing the existing note/transcript while Dragon Copilot
       // re-processes them, not blank the screen back to "processing".
       const correlationId = await DragonCopilotBackend.submitRecording(
-        audioUri,
-        audioName,
+        uri,
+        name,
         selectedPatient,
         dragonCorrelationId,
         recordings.length + 1
@@ -713,13 +742,19 @@ export default function App() {
       ]);
       setLastSubmittedAt(new Date());
       setPollGeneration((g) => g + 1);
-      setScreen('dragonNote');
     } catch (err) {
-      Alert.alert('Dragon Copilot submission failed', String(err?.message ?? err));
+      notify('Dragon Copilot submission failed', String(err?.message ?? err));
     } finally {
       setSubmitting(false);
       setSubmitStep('');
     }
+  }
+
+  // Upload-file flow's manual submit button — mic recordings auto-submit
+  // instead (see stopRecording) and go straight to a "View Note" button.
+  async function handleDragonSubmitRecording() {
+    await submitAudioToDragon(audioUri, audioName);
+    setScreen('dragonNote');
   }
 
   // Returns to the recording screen without losing the current encounter —
@@ -728,6 +763,7 @@ export default function App() {
   function handleRecordAnother() {
     setAudioUri(null);
     setAudioName(null);
+    setAudioSource(null);
     setDuration(0);
     setScreen('record');
   }
@@ -862,7 +898,7 @@ export default function App() {
         <StatusBar style="auto" />
         <View style={styles.tsHeader}>
           <TouchableOpacity onPress={() => setScreen('record')} style={styles.backButton}>
-            <Text style={styles.backButtonText}>‹ Back</Text>
+            <Text style={styles.backButtonText}>‹ Recording</Text>
           </TouchableOpacity>
           <Text style={styles.tsTitle}>Dragon Copilot</Text>
           <View style={{ width: 80 }} />
@@ -993,8 +1029,12 @@ export default function App() {
       <View style={styles.container}>
         {/* Header */}
         {dragonCorrelationId && (
-          <TouchableOpacity style={styles.backToResultsLink} onPress={() => setScreen('dragonNote')}>
-            <Text style={styles.backToResultsLinkText}>‹ Back to Results</Text>
+          <TouchableOpacity
+            style={styles.viewResultsButton}
+            onPress={() => setScreen('dragonNote')}
+            activeOpacity={0.85}
+          >
+            <Text style={styles.viewResultsButtonText}>‹ View Dragon Copilot Results</Text>
           </TouchableOpacity>
         )}
         <Text style={styles.title}>Doctor Robbie</Text>
@@ -1087,8 +1127,33 @@ export default function App() {
               <Text style={styles.uploadButtonText}>Upload Audio File</Text>
             </TouchableOpacity>
 
-            {/* Actions after audio is ready */}
-            {audioUri && !isRecording && (
+            {/* Actions after audio is ready. Mic recordings auto-submit the
+                instant recording stops, so there's nothing left to send —
+                just a progress indicator, then a way to view the note.
+                Uploaded files still need an explicit Send/Discard, since
+                they aren't submitted automatically. */}
+            {audioUri && !isRecording && audioSource === 'mic' && (
+              <View style={styles.actions}>
+                <Text style={styles.readyText}>
+                  {audioName ?? 'Recording'}{duration > 0 ? ` (${formatDuration(duration)})` : ''}
+                </Text>
+                {submitting ? (
+                  <View style={[styles.primaryButton, styles.buttonDisabled]}>
+                    <View style={styles.loadingRow}>
+                      <ActivityIndicator color="#fff" size="small" />
+                      <Text style={[styles.primaryButtonText, { marginLeft: 10 }]}>
+                        {submitStep || 'Working…'}
+                      </Text>
+                    </View>
+                  </View>
+                ) : (
+                  <TouchableOpacity style={styles.primaryButton} onPress={() => setScreen('dragonNote')}>
+                    <Text style={styles.primaryButtonText}>View Note</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+            )}
+            {audioUri && !isRecording && audioSource === 'upload' && (
               <View style={styles.actions}>
                 <Text style={styles.readyText}>
                   {audioName ?? 'Recording'}{duration > 0 ? ` (${formatDuration(duration)})` : ''}
@@ -1644,8 +1709,13 @@ const styles = StyleSheet.create({
   debugLink: { marginBottom: 24, marginTop: -8 },
   debugLinkText: { fontSize: 12, color: C.textLight, textDecorationLine: 'underline' },
 
-  backToResultsLink: { alignSelf: 'flex-start', marginBottom: 12 },
-  backToResultsLinkText: { color: C.gold, fontSize: 15, fontWeight: '600' },
+  viewResultsButton: {
+    flexDirection: 'row', alignSelf: 'flex-start', alignItems: 'center', justifyContent: 'center',
+    backgroundColor: C.blue, borderRadius: 20,
+    paddingVertical: 9, paddingHorizontal: 18, marginBottom: 16,
+    shadowColor: C.blue, shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.3, shadowRadius: 4, elevation: 3,
+  },
+  viewResultsButtonText: { color: C.white, fontSize: 13, fontWeight: '700', letterSpacing: 0.2 },
 
   logScroll: { flex: 1 },
   logContent: { padding: 12 },
