@@ -169,6 +169,27 @@ function findArtifact(artifacts, keyword) {
   );
 }
 
+// Converts Epic's narrative HTML (IPS sections, clinical notes) into plain,
+// readable text — good enough for pasting into a chat tool like Dragon
+// Copilot Chat, which doesn't render HTML.
+function htmlToPlainText(html) {
+  if (!html) return '';
+  return html
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/(p|div|tr|li|h[1-6]|table)>/gi, '\n')
+    .replace(/<(td|th)[^>]*>/gi, ' ')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/gi, '&')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/gi, "'")
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
 // ---------------------------------------------------------------------------
 // App
 // ---------------------------------------------------------------------------
@@ -210,6 +231,7 @@ export default function App() {
   const [notesError, setNotesError] = useState('');
   const [expandedNoteId, setExpandedNoteId] = useState(null);
   const [noteTexts, setNoteTexts] = useState({}); // { [noteId]: { loading, text, error } }
+  const [compilingForDragon, setCompilingForDragon] = useState(false);
 
   // Dragon Copilot submission
   const [submitting, setSubmitting] = useState(false);
@@ -554,8 +576,74 @@ export default function App() {
   async function handleCopyNoteText(note) {
     const entry = noteTexts[note.id];
     if (!entry?.text) return;
-    await Clipboard.setStringAsync(entry.text);
+    await Clipboard.setStringAsync(htmlToPlainText(entry.text));
     Alert.alert('Copied', 'The note text was copied to your clipboard.');
+  }
+
+  // Pulls the International Patient Summary and every clinical note's text
+  // into one plain-text block, ready to paste into Dragon Copilot Chat
+  // (a separate app — there's no API for this, so the clipboard is the
+  // hand-off point). Fetches whatever hasn't been loaded yet (IPS, and any
+  // note bodies the physician hasn't tapped into) rather than requiring
+  // every section to already be open.
+  async function handleCompileForDragon() {
+    if (!selectedPatient?.id) return;
+    setCompilingForDragon(true);
+    try {
+      let ipsData = ips;
+      if (!ipsData) {
+        try {
+          ipsData = await EpicClient.fetchIPS(selectedPatient.id);
+          setIps(ipsData);
+        } catch (err) {
+          ipsData = null;
+        }
+      }
+
+      const updatedNoteTexts = { ...noteTexts };
+      for (const note of clinicalNotes) {
+        if (!updatedNoteTexts[note.id]?.text) {
+          try {
+            const text = await EpicClient.fetchClinicalNoteText(note);
+            updatedNoteTexts[note.id] = { loading: false, text, error: '' };
+          } catch (err) {
+            updatedNoteTexts[note.id] = { loading: false, text: null, error: String(err?.message ?? err) };
+          }
+        }
+      }
+      setNoteTexts(updatedNoteTexts);
+
+      const parts = [`Patient: ${patientDisplayName(selectedPatient)}`];
+      if (patientSubtitle(selectedPatient)) parts.push(patientSubtitle(selectedPatient));
+      parts.push('');
+
+      if (ipsData?.sections?.length) {
+        parts.push('=== International Patient Summary ===', '');
+        for (const section of ipsData.sections) {
+          parts.push(`-- ${section.title} --`, htmlToPlainText(section.html), '');
+        }
+      }
+
+      if (clinicalNotes.length) {
+        parts.push('=== Clinical Notes ===', '');
+        for (const note of clinicalNotes) {
+          const entry = updatedNoteTexts[note.id];
+          const heading = [note.title, note.author, note.date].filter(Boolean).join('  ·  ');
+          parts.push(`-- ${heading} --`, entry?.text ? htmlToPlainText(entry.text) : '[content unavailable]', '');
+        }
+      }
+
+      const compiled = parts.join('\n').trim();
+      await Clipboard.setStringAsync(compiled);
+      Alert.alert(
+        'Copied for Dragon Copilot',
+        'The patient summary and clinical notes were compiled and copied to your clipboard — paste into Dragon Copilot Chat.'
+      );
+    } catch (err) {
+      Alert.alert('Compile failed', String(err?.message ?? err));
+    } finally {
+      setCompilingForDragon(false);
+    }
   }
 
   function handleDiscard() {
@@ -1159,6 +1247,18 @@ export default function App() {
               </View>
 
               <ScrollView contentContainerStyle={styles.chartScrollContent}>
+            <TouchableOpacity
+              style={[styles.primaryButton, styles.compileButton, compilingForDragon && styles.buttonDisabled]}
+              onPress={handleCompileForDragon}
+              disabled={compilingForDragon}
+            >
+              {compilingForDragon ? (
+                <ActivityIndicator color={C.white} size="small" />
+              ) : (
+                <Text style={styles.primaryButtonText}>Compile for Dragon Copilot</Text>
+              )}
+            </TouchableOpacity>
+
             <Text style={styles.chartSectionTitle}>Problems & Reason for Visit</Text>
             {loadingConditions ? (
               <ActivityIndicator color={C.blue} style={styles.chartSpinner} />
@@ -1414,6 +1514,7 @@ const styles = StyleSheet.create({
   localPanelHeaderBadge: { borderWidth: 1.5, borderColor: C.gold, borderRadius: 5, paddingVertical: 2, paddingHorizontal: 6 },
   localPanelHeaderBadgeText: { color: C.blue, fontSize: 12, fontWeight: '800', letterSpacing: 0.3 },
   chartScrollContent: { padding: 20 },
+  compileButton: { marginBottom: 24 },
   chartSectionTitle: { fontSize: 15, fontWeight: '700', color: C.blue, marginBottom: 10 },
   chartSpinner: { marginVertical: 12 },
   chartErrorText: { fontSize: 13, color: C.danger, marginBottom: 8 },
