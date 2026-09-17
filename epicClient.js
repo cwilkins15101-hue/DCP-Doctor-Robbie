@@ -125,20 +125,21 @@ async function fetchAttachmentText(attachment, accessToken) {
   throw new Error('The document had neither inline data nor a retrievable URL.');
 }
 
-// Retrieves this patient's current CCD (Continuity of Care Document) via
-// the DocumentReference $docref operation. Epic generates it on demand and
-// returns a DocumentReference pointing at the document. Explicitly asks
-// for the CCD by its standard LOINC type code (34133-9, "Summarization of
-// episode note") — omitting `type` seemed to make Epic fail an internal
-// lookup for a default document type, surfaced as a confusing "FHIR ID
-// provided was not found" error.
+// Retrieves this patient's current CCD (Continuity of Care Document).
+// Epic's own Binary.Read docs point at the ordinary DocumentReference
+// Search interaction ("often through querying for DocumentReference
+// resources through the search interaction") rather than the $docref
+// operation, which never got past a confusing "FHIR ID provided was not
+// found" error no matter how it was invoked. Searching by patient + the
+// CCD's LOINC type code (34133-9, "Summarization of episode note") uses
+// the exact same proven pattern as the Clinical Notes search.
 async function fetchCCD(patientId) {
   const accessToken = await EpicAuth.getAccessToken();
   const params = new URLSearchParams({
     patient: patientId,
     type: 'http://loinc.org|34133-9',
   });
-  const docRefResponse = await fetch(`${FHIR_BASE_URL}/DocumentReference/$docref?${params.toString()}`, {
+  const docRefResponse = await fetch(`${FHIR_BASE_URL}/DocumentReference?${params.toString()}`, {
     headers: { Authorization: `Bearer ${accessToken}`, Accept: 'application/fhir+json' },
   });
   if (!docRefResponse.ok) {

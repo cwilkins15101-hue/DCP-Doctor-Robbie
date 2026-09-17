@@ -9,6 +9,7 @@ import * as DocumentPicker from 'expo-document-picker';
 import * as Clipboard from 'expo-clipboard';
 import { StatusBar } from 'expo-status-bar';
 import { Ionicons } from '@expo/vector-icons';
+import RenderHtml from 'react-native-render-html';
 import { DragonCopilotBackend } from './dragonCopilotBackend';
 import { DdeClient } from './ddeClient';
 import { EpicClient } from './epicClient';
@@ -173,6 +174,7 @@ function findArtifact(artifacts, keyword) {
 // ---------------------------------------------------------------------------
 export default function App() {
   const { width: windowWidth } = useWindowDimensions();
+  const panelWidth = Math.min(440, windowWidth * 0.92);
 
   // Screen: 'record' | 'dragonNote'
   const [screen, setScreen] = useState('record');
@@ -1055,12 +1057,12 @@ export default function App() {
             style={[
               styles.chartPanel,
               {
-                width: Math.min(440, windowWidth * 0.92),
+                width: panelWidth,
                 transform: [
                   {
                     translateX: patientPanelAnim.interpolate({
                       inputRange: [0, 1],
-                      outputRange: [Math.min(440, windowWidth * 0.92), 0],
+                      outputRange: [panelWidth, 0],
                     }),
                   },
                 ],
@@ -1138,12 +1140,12 @@ export default function App() {
             style={[
               styles.chartPanel,
               {
-                width: Math.min(440, windowWidth * 0.92),
+                width: panelWidth,
                 transform: [
                   {
                     translateX: chartPanelAnim.interpolate({
                       inputRange: [0, 1],
-                      outputRange: [Math.min(440, windowWidth * 0.92), 0],
+                      outputRange: [panelWidth, 0],
                     }),
                   },
                 ],
@@ -1247,10 +1249,13 @@ export default function App() {
                           >
                             <Text style={styles.loadPatientButtonText}>Copy Note to Clipboard</Text>
                           </TouchableOpacity>
-                          <Text style={styles.ccdText} selectable>
-                            {entry.text.slice(0, 2000)}
-                            {entry.text.length > 2000 ? '…' : ''}
-                          </Text>
+                          <View style={styles.noteHtmlBox}>
+                            <RenderHtml
+                              contentWidth={panelWidth - 64}
+                              source={{ html: entry.text }}
+                              baseStyle={styles.noteHtmlBase}
+                            />
+                          </View>
                         </>
                       ) : null
                     ) : null}
@@ -1427,6 +1432,8 @@ const styles = StyleSheet.create({
     fontSize: 11, color: C.textMid, fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
     backgroundColor: C.bg, borderRadius: 8, padding: 12, lineHeight: 16,
   },
+  noteHtmlBox: { backgroundColor: C.bg, borderRadius: 8, padding: 12 },
+  noteHtmlBase: { fontSize: 13, color: C.textDark, lineHeight: 19 },
 
   debugLink: { marginBottom: 24, marginTop: -8 },
   debugLinkText: { fontSize: 12, color: C.textLight, textDecorationLine: 'underline' },
