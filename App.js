@@ -196,15 +196,15 @@ export default function App() {
   const [patientListSource, setPatientListSource] = useState('local'); // 'local' | 'epic' — drives the panel header
   const [loadingEpicPatients, setLoadingEpicPatients] = useState(false);
 
-  // Epic patient chart (Conditions + CCD) — only available for patients
+  // Epic patient chart (Conditions + IPS) — only available for patients
   // loaded from Epic (they carry a FHIR id; CSV-loaded patients don't).
   const [chartModalVisible, setChartModalVisible] = useState(false);
   const [loadingConditions, setLoadingConditions] = useState(false);
   const [conditions, setConditions] = useState([]);
   const [chartError, setChartError] = useState('');
-  const [loadingCcd, setLoadingCcd] = useState(false);
-  const [ccd, setCcd] = useState(null); // { xml, meta }
-  const [ccdError, setCcdError] = useState('');
+  const [loadingIps, setLoadingIps] = useState(false);
+  const [ips, setIps] = useState(null); // { generatedAt, sections }
+  const [ipsError, setIpsError] = useState('');
   const [loadingNotes, setLoadingNotes] = useState(false);
   const [clinicalNotes, setClinicalNotes] = useState([]);
   const [notesError, setNotesError] = useState('');
@@ -483,17 +483,16 @@ export default function App() {
 
   // Opens the chart modal and loads this Epic patient's Conditions
   // (Problems & Reason for Visit) and the list of their Clinical Notes.
-  // The CCD, and each note's actual text, are fetched separately, on
-  // demand — $docref generation and note bodies are both slower/heavier
-  // than a plain list read.
+  // The International Patient Summary, and each note's actual text, are
+  // fetched separately, on demand — both are heavier than a plain list read.
   async function handleViewChart() {
     if (!selectedPatient?.id) return;
     setChartModalVisible(true);
     setLoadingConditions(true);
     setChartError('');
     setConditions([]);
-    setCcd(null);
-    setCcdError('');
+    setIps(null);
+    setIpsError('');
     setClinicalNotes([]);
     setNotesError('');
     setExpandedNoteId(null);
@@ -517,24 +516,18 @@ export default function App() {
     }
   }
 
-  async function handleFetchCCD() {
+  async function handleFetchIPS() {
     if (!selectedPatient?.id) return;
-    setLoadingCcd(true);
-    setCcdError('');
+    setLoadingIps(true);
+    setIpsError('');
     try {
-      const result = await EpicClient.fetchCCD(selectedPatient.id);
-      setCcd(result);
+      const result = await EpicClient.fetchIPS(selectedPatient.id);
+      setIps(result);
     } catch (err) {
-      setCcdError(String(err?.message ?? err));
+      setIpsError(String(err?.message ?? err));
     } finally {
-      setLoadingCcd(false);
+      setLoadingIps(false);
     }
-  }
-
-  async function handleCopyCCD() {
-    if (!ccd?.xml) return;
-    await Clipboard.setStringAsync(ccd.xml);
-    Alert.alert('Copied', 'The full CCD document was copied to your clipboard.');
   }
 
   // Expands/collapses a clinical note, fetching its text the first time
@@ -1188,28 +1181,31 @@ export default function App() {
 
             <View style={styles.chartDivider} />
 
-            <Text style={styles.chartSectionTitle}>Continuity of Care Document (CCD)</Text>
-            {!ccd && !loadingCcd ? (
-              <TouchableOpacity style={styles.loadPatientButton} onPress={handleFetchCCD}>
-                <Text style={styles.loadPatientButtonText}>Get CCD</Text>
+            <Text style={styles.chartSectionTitle}>International Patient Summary</Text>
+            {!ips && !loadingIps ? (
+              <TouchableOpacity style={styles.loadPatientButton} onPress={handleFetchIPS}>
+                <Text style={styles.loadPatientButtonText}>Get International Patient Summary</Text>
               </TouchableOpacity>
             ) : null}
-            {loadingCcd ? <ActivityIndicator color={C.blue} style={styles.chartSpinner} /> : null}
-            {ccdError ? <Text style={styles.chartErrorText}>{ccdError}</Text> : null}
-            {ccd ? (
+            {loadingIps ? <ActivityIndicator color={C.blue} style={styles.chartSpinner} /> : null}
+            {ipsError ? <Text style={styles.chartErrorText}>{ipsError}</Text> : null}
+            {ips ? (
               <>
-                <Text style={styles.chartEmptyText}>
-                  {ccd.meta.type}{ccd.meta.date ? `  ·  ${ccd.meta.date}` : ''}
-                  {'  ·  '}{Math.round(ccd.xml.length / 1024)} KB
-                </Text>
-                <TouchableOpacity style={[styles.loadPatientButton, styles.ccdCopyButton]} onPress={handleCopyCCD}>
-                  <Text style={styles.loadPatientButtonText}>Copy Full CCD to Clipboard</Text>
-                </TouchableOpacity>
-                <Text style={styles.ccdPreviewLabel}>Preview (first 2,000 characters):</Text>
-                <Text style={styles.ccdText} selectable>
-                  {ccd.xml.slice(0, 2000)}
-                  {ccd.xml.length > 2000 ? '…' : ''}
-                </Text>
+                {ips.generatedAt ? (
+                  <Text style={styles.chartEmptyText}>Generated {ips.generatedAt}</Text>
+                ) : null}
+                {ips.sections.map((section) => (
+                  <View key={section.id} style={styles.ipsSection}>
+                    <Text style={styles.ipsSectionTitle}>{section.title}</Text>
+                    <View style={styles.noteHtmlBox}>
+                      <RenderHtml
+                        contentWidth={panelWidth - 64}
+                        source={{ html: section.html }}
+                        baseStyle={styles.noteHtmlBase}
+                      />
+                    </View>
+                  </View>
+                ))}
               </>
             ) : null}
 
@@ -1244,7 +1240,7 @@ export default function App() {
                       ) : entry?.text ? (
                         <>
                           <TouchableOpacity
-                            style={[styles.loadPatientButton, styles.ccdCopyButton]}
+                            style={[styles.loadPatientButton, styles.copyButtonSpacing]}
                             onPress={() => handleCopyNoteText(note)}
                           >
                             <Text style={styles.loadPatientButtonText}>Copy Note to Clipboard</Text>
@@ -1397,7 +1393,7 @@ const styles = StyleSheet.create({
   reloadButton: { alignItems: 'center', paddingVertical: 12 },
   reloadButtonText: { color: C.gold, fontSize: 15, fontWeight: '600' },
 
-  // Epic Chart Summary — right-side slide-in panel (Conditions + CCD + Notes)
+  // Epic Chart Summary — right-side slide-in panel (Conditions + IPS + Notes)
   chartOverlay: { flex: 1, flexDirection: 'row', backgroundColor: 'rgba(11, 31, 58, 0.4)' },
   chartBackdrop: { flex: 1 },
   chartPanel: {
@@ -1426,14 +1422,11 @@ const styles = StyleSheet.create({
   conditionRow: { paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: C.border },
   conditionText: { fontSize: 14, fontWeight: '600', color: C.textDark },
   conditionMeta: { fontSize: 12, color: C.textLight, marginTop: 2 },
-  ccdCopyButton: { marginTop: 8, marginBottom: 16 },
-  ccdPreviewLabel: { fontSize: 12, color: C.textLight, marginBottom: 6 },
-  ccdText: {
-    fontSize: 11, color: C.textMid, fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
-    backgroundColor: C.bg, borderRadius: 8, padding: 12, lineHeight: 16,
-  },
+  copyButtonSpacing: { marginTop: 8, marginBottom: 16 },
   noteHtmlBox: { backgroundColor: C.bg, borderRadius: 8, padding: 12 },
   noteHtmlBase: { fontSize: 13, color: C.textDark, lineHeight: 19 },
+  ipsSection: { marginBottom: 20 },
+  ipsSectionTitle: { fontSize: 14, fontWeight: '700', color: C.textDark, marginBottom: 8 },
 
   debugLink: { marginBottom: 24, marginTop: -8 },
   debugLinkText: { fontSize: 12, color: C.textLight, textDecorationLine: 'underline' },

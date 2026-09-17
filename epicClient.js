@@ -40,7 +40,7 @@ function mrnFromFhir(resource) {
 // Converts a FHIR Patient resource into the same field names used by
 // CSV-loaded patients ('Patient Name', 'MRN', 'DOB', ...). Keeps the FHIR
 // id (CSV-loaded patients don't have one) — the chart screen needs it to
-// look up this specific patient's Conditions and CCD afterward.
+// look up this specific patient's Conditions, IPS, and notes afterward.
 function toAppPatient(resource) {
   return {
     id: resource.id,
@@ -101,8 +101,7 @@ async function fetchConditions(patientId) {
 
 // Resolves a DocumentReference attachment into its actual text content —
 // either it's inline as base64 (attachment.data) or it points at a
-// separate Binary to fetch (attachment.url). Shared by CCD and Clinical
-// Notes retrieval, which both hand back attachments in this same shape.
+// separate Binary to fetch (attachment.url).
 async function fetchAttachmentText(attachment, accessToken) {
   if (attachment.data) {
     return globalThis.atob(attachment.data);
@@ -125,64 +124,42 @@ async function fetchAttachmentText(attachment, accessToken) {
   throw new Error('The document had neither inline data nor a retrievable URL.');
 }
 
-// Pulls the first DocumentReference (with a usable attachment) out of a
-// FHIR search/operation Bundle response.
-function firstDocRefWithAttachment(bundle) {
-  return (bundle.entry ?? [])
-    .map((entry) => entry.resource)
-    .filter((resource) => resource?.resourceType === 'DocumentReference')
-    .find((resource) => resource.content?.[0]?.attachment);
-}
-
-// Retrieves this patient's current CCD (Continuity of Care Document).
-// Tries the ordinary DocumentReference Search interaction first — Epic's
-// own Binary.Read docs point at it ("often through querying for
-// DocumentReference resources through the search interaction"), and it's
-// the exact same proven pattern as the Clinical Notes search. If nothing
-// is found (Epic may not keep a standing DocumentReference for this
-// category until one is actually generated), falls back to the $docref
-// operation, which exists specifically to generate one on demand.
-async function fetchCCD(patientId) {
+// Retrieves the International Patient Summary (IPS) — Epic's newer
+// alternative to a plain CCD. A single Patient $summary call generates a
+// Bundle with a Composition (summarizing what's inside) plus discrete FHIR
+// resources for Problems, Allergies, Medications, and Immunizations. Each
+// Composition section also carries ready-to-render narrative HTML, so no
+// separate document-then-binary fetch (and no C-CDA XML parsing) is needed.
+async function fetchIPS(patientId) {
   const accessToken = await EpicAuth.getAccessToken();
   const params = new URLSearchParams({
-    patient: patientId,
-    type: 'http://loinc.org|34133-9',
+    profile: 'http://hl7.org/fhir/uv/ips/StructureDefinition/Composition-uv-ips',
   });
-  const searchResponse = await fetch(`${FHIR_BASE_URL}/DocumentReference?${params.toString()}`, {
-    headers: { Authorization: `Bearer ${accessToken}`, Accept: 'application/fhir+json' },
-  });
-  if (!searchResponse.ok) {
-    throw new Error(`Epic CCD lookup failed (${searchResponse.status}): ${await searchResponse.text()}`);
+  const response = await fetch(
+    `${FHIR_BASE_URL}/Patient/${encodeURIComponent(patientId)}/$summary?${params.toString()}`,
+    { headers: { Authorization: `Bearer ${accessToken}`, Accept: 'application/fhir+json' } }
+  );
+  if (!response.ok) {
+    throw new Error(`Epic IPS lookup failed (${response.status}): ${await response.text()}`);
   }
-  const searchBundle = await searchResponse.json();
-  let docRef = firstDocRefWithAttachment(searchBundle);
-  let docrefDetail = '';
-
-  if (!docRef) {
-    const docrefResponse = await fetch(
-      `${FHIR_BASE_URL}/DocumentReference/$docref?${params.toString()}`,
-      { headers: { Authorization: `Bearer ${accessToken}`, Accept: 'application/fhir+json' } }
-    );
-    if (docrefResponse.ok) {
-      docRef = firstDocRefWithAttachment(await docrefResponse.json());
-      if (!docRef) docrefDetail = '$docref succeeded but returned no DocumentReference with an attachment.';
-    } else {
-      docrefDetail = `$docref fallback also failed (${docrefResponse.status}): ${await docrefResponse.text()}`;
-    }
+  const bundle = await response.json();
+  const composition = (bundle.entry ?? [])
+    .map((entry) => entry.resource)
+    .find((resource) => resource?.resourceType === 'Composition');
+  if (!composition) {
+    throw new Error('Epic did not return an International Patient Summary for this patient.');
   }
 
-  const attachment = docRef?.content?.[0]?.attachment;
-  if (!attachment) {
-    const searchDetail = `Search returned ${searchBundle.total ?? (searchBundle.entry ?? []).length} entries.`;
-    throw new Error(`Epic did not return a CCD document for this patient. ${searchDetail} ${docrefDetail}`.trim());
-  }
-
-  const meta = {
-    type: docRef.type?.text ?? docRef.type?.coding?.[0]?.display ?? 'Continuity of Care Document',
-    date: docRef.date ?? '',
+  return {
+    generatedAt: bundle.timestamp ?? composition.date ?? '',
+    sections: (composition.section ?? [])
+      .filter((section) => section.text?.div)
+      .map((section, index) => ({
+        id: `${index}-${section.title ?? 'section'}`,
+        title: section.title ?? 'Section',
+        html: section.text.div,
+      })),
   };
-  const xml = await fetchAttachmentText(attachment, accessToken);
-  return { xml, meta };
 }
 
 // Converts a FHIR DocumentReference (Clinical Notes category) into a flat
@@ -200,7 +177,7 @@ function toAppClinicalNote(resource) {
 
 // Lists this patient's clinical notes (progress notes, H&P, discharge
 // summaries, etc.) — the actual free-text documents clinicians wrote, as
-// opposed to the system-generated CCD summary.
+// opposed to the system-generated IPS summary.
 async function fetchClinicalNotes(patientId) {
   const accessToken = await EpicAuth.getAccessToken();
   const response = await fetch(
@@ -231,7 +208,7 @@ async function fetchClinicalNoteText(note) {
 export const EpicClient = {
   fetchSandboxPatients,
   fetchConditions,
-  fetchCCD,
+  fetchIPS,
   fetchClinicalNotes,
   fetchClinicalNoteText,
   missingConfigKeys: EpicAuth.missingConfigKeys,
