@@ -108,7 +108,13 @@ async function fetchAttachmentText(attachment, accessToken) {
     return globalThis.atob(attachment.data);
   }
   if (attachment.url) {
-    const binaryResponse = await fetch(attachment.url, {
+    // Epic sometimes returns this as a relative reference (e.g.
+    // "Binary/abc123") rather than a full URL. Resolved against the app's
+    // own address (the default for a relative fetch() in a browser), that
+    // silently "succeeds" against the app's own page instead of Epic's
+    // server — resolving it against the FHIR base URL instead fixes that.
+    const binaryUrl = new URL(attachment.url, `${FHIR_BASE_URL}/`).toString();
+    const binaryResponse = await fetch(binaryUrl, {
       headers: { Authorization: `Bearer ${accessToken}`, Accept: attachment.contentType || 'application/xml' },
     });
     if (!binaryResponse.ok) {
