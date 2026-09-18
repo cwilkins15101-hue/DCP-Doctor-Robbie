@@ -113,16 +113,24 @@ async function getTokenLaunchInfo() {
   return response.json();
 }
 
-// Opens Dragon Copilot's own web UI in a new browser tab, seeded with this
-// encounter's correlationId and (if available) the Epic patient's context,
-// per Microsoft's Token Launch API. That API's own docs say a real REST
-// client (fetch/Postman/etc.) isn't recommended — it works via the
+// Opens Dragon Copilot's own web UI, seeded with this encounter's
+// correlationId and (if available) the Epic patient's context, per
+// Microsoft's Token Launch API. That API's own docs say a real REST client
+// (fetch/Postman/etc.) isn't recommended — it works via the
 // POST-REDIRECT-GET pattern, so the browser itself needs to submit the
 // form and follow the resulting redirect to actually show the page. A
 // fetch() call would just receive the redirect response as inert data
 // instead of navigating anywhere. That's also why this only works on the
-// web build — there's no such form-submission/new-tab mechanism natively.
-async function launchDragonCopilot({ correlationId, patient, launchType = 'copilot' }) {
+// web build — there's no such form-submission mechanism natively.
+//
+// target controls where the response lands: '_blank' (default) opens a
+// new tab; passing the `name` of an already-mounted <iframe> instead
+// submits into that frame. Whether the iframe case actually renders
+// anything depends entirely on Dragon Copilot's own server — if it sends
+// an X-Frame-Options/CSP header refusing to be framed, the browser blocks
+// it silently from JS's perspective (check the browser console for the
+// refusal), and there's no client-side way around that.
+async function launchDragonCopilot({ correlationId, patient, launchType = 'copilot', target = '_blank' }) {
   if (Platform.OS !== 'web') {
     throw new Error('Launching Dragon Copilot this way only works in the web app for now.');
   }
@@ -146,7 +154,7 @@ async function launchDragonCopilot({ correlationId, patient, launchType = 'copil
   const form = document.createElement('form');
   form.method = 'POST';
   form.action = `${info.ehrBaseUrl.replace(/\/$/, '')}/api/${encodeURIComponent(info.ehr)}/token-launch`;
-  form.target = '_blank';
+  form.target = target;
 
   const input = document.createElement('input');
   input.type = 'hidden';

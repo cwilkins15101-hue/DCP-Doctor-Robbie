@@ -101,23 +101,26 @@ function formatClockTime(date) {
 // response { notificationId, data: "<JSON string>" } — so the actual note
 // JSON is three levels down at data.data.data (confirmed from a real
 // webhook delivery). resources[] holds the note's sections, each with a
-// display name and text (often empty for sections the encounter didn't
-// cover). Returns null if the shape doesn't match, so callers can fall
-// back to showing the raw JSON.
+// display name and text — legitimately empty ("") for sections the
+// encounter didn't cover, which is common for short recordings and NOT a
+// sign the payload shape is wrong. Returns null only when the shape itself
+// doesn't match (so callers can fall back to raw JSON as a last resort);
+// an empty sections array is a valid result the caller should render as
+// "nothing here," not treat as unparseable.
 // ---------------------------------------------------------------------------
 function parseDragonNote(noteBody) {
   try {
     const raw = noteBody?.data?.data?.data;
     if (typeof raw !== 'string') return null;
     const payload = JSON.parse(raw);
-    const sections = (payload.resources || [])
+    if (!Array.isArray(payload.resources)) return null;
+    const sections = payload.resources
       .map((r) => ({
         id: r.legacy_id,
         title: r.context?.display_description || r.legacy_id,
         content: (r.content || '').replace(/\r\n/g, '\n').trim(),
       }))
       .filter((s) => s.content.length > 0);
-    if (sections.length === 0) return null;
     return { title: payload.document?.title || 'Clinical Note', sections };
   } catch {
     return null;
@@ -129,14 +132,16 @@ function parseDragonNote(noteBody) {
 // encounter_data_ready_complete — see Notification events docs). Its
 // retrieval payload's confirmed shape (see Recordings, sessions, and
 // transcript docs) is transcript.turns[], each with an index, a speaker
-// ("clinician" or "other"), and text — no artifact_type field at all.
+// ("clinician" or "other"), and text — no artifact_type field at all. As
+// with parseDragonNote, zero turns (a short/silent recording) is a valid
+// result, not a sign the shape doesn't match.
 function parseDragonTranscript(transcriptBody) {
   try {
     const raw = transcriptBody?.data?.data?.data;
     if (typeof raw !== 'string') return null;
     const payload = JSON.parse(raw);
     const rawTurns = payload.transcript?.turns;
-    if (!Array.isArray(rawTurns) || rawTurns.length === 0) return null;
+    if (!Array.isArray(rawTurns)) return null;
     const turns = rawTurns
       .slice()
       .sort((a, b) => (a.index ?? 0) - (b.index ?? 0))
@@ -146,7 +151,7 @@ function parseDragonTranscript(transcriptBody) {
         text: (t.text || '').replace(/\r\n/g, '\n').trim(),
       }))
       .filter((t) => t.text.length > 0);
-    return turns.length > 0 ? { turns } : null;
+    return { turns };
   } catch {
     return null;
   }
@@ -256,6 +261,11 @@ export default function App() {
   const [noteTexts, setNoteTexts] = useState({}); // { [noteId]: { loading, text, error } }
   const [compilingForDragon, setCompilingForDragon] = useState(false);
   const [launchingDragonCopilot, setLaunchingDragonCopilot] = useState(false);
+  // Trying an embedded-iframe launch instead of a new tab — whether this
+  // actually renders anything depends on whether Dragon Copilot's own
+  // server allows itself to be framed (see dragonCopilotBackend.js).
+  const [dragonFrameVisible, setDragonFrameVisible] = useState(false);
+  const DRAGON_FRAME_NAME = 'dragonEmbedFrame';
 
   // Dragon Copilot Summary — a left-side slide-in panel showing the
   // compiled IPS + Clinical Notes text (mirrors the Epic Chart Summary
@@ -726,22 +736,32 @@ export default function App() {
     }
   }
 
-  // Opens Dragon Copilot's own web app in a new tab, seeded with this
-  // encounter's correlationId and (if the patient came from Epic) their
-  // FHIR patient context — Microsoft's Token Launch API. Requires a
-  // correlationId (i.e. at least one recording already submitted), since
-  // that's how Dragon Copilot ties the new tab back to this encounter.
+  // Opens Dragon Copilot's own web app inside an embedded iframe, seeded
+  // with this encounter's correlationId and (if the patient came from
+  // Epic) their FHIR patient context — Microsoft's Token Launch API.
+  // Requires a correlationId (i.e. at least one recording already
+  // submitted), since that's how Dragon Copilot ties the launch back to
+  // this encounter. Whether anything actually renders in the iframe below
+  // depends entirely on Dragon Copilot's own server allowing itself to be
+  // framed — see dragonCopilotBackend.js.
   async function handleLaunchDragonCopilot() {
     if (!dragonCorrelationId) return;
     setLaunchingDragonCopilot(true);
+    setDragonFrameVisible(true);
     try {
+      // The iframe needs to actually be mounted before the form below
+      // submits, since it targets it by name — otherwise the browser
+      // can't find a matching frame yet and opens a new window instead.
+      await new Promise((resolve) => requestAnimationFrame(resolve));
       await DragonCopilotBackend.launchDragonCopilot({
         correlationId: dragonCorrelationId,
         patient: selectedPatient,
         launchType: 'copilot',
+        target: DRAGON_FRAME_NAME,
       });
     } catch (err) {
       notify('Could not launch Dragon Copilot', String(err?.message ?? err));
+      setDragonFrameVisible(false);
     } finally {
       setLaunchingDragonCopilot(false);
     }
@@ -898,6 +918,39 @@ export default function App() {
     );
   }
 
+  // Embedded Dragon Copilot launch — an experiment in showing Dragon
+  // Copilot's web app inside this modal via an iframe instead of a new
+  // browser tab. Whether anything actually appears here depends entirely
+  // on Dragon Copilot's own server allowing itself to be framed (an
+  // X-Frame-Options/CSP decision made on their end, invisible to our own
+  // JS) — see dragonCopilotBackend.js's launchDragonCopilot.
+  function renderDragonFrameModal() {
+    return (
+      <Modal
+        visible={dragonFrameVisible}
+        animationType="slide"
+        presentationStyle="pageSheet"
+        onRequestClose={() => setDragonFrameVisible(false)}
+      >
+        <SafeAreaView style={styles.modalSafeArea}>
+          <View style={styles.modalHeader}>
+            <Text style={styles.modalTitle}>Dragon Copilot</Text>
+            <TouchableOpacity onPress={() => setDragonFrameVisible(false)}>
+              <Text style={styles.modalClose}>Close</Text>
+            </TouchableOpacity>
+          </View>
+          {Platform.OS === 'web' && (
+            <iframe
+              name={DRAGON_FRAME_NAME}
+              title="Dragon Copilot"
+              style={{ flex: 1, border: 'none', width: '100%', height: '100%' }}
+            />
+          )}
+        </SafeAreaView>
+      </Modal>
+    );
+  }
+
   // Sign-in gate — Doctor Robbie's own login. Checked before any
   // screen-specific rendering below, so nothing else in the app is
   // reachable until a physician signs in with Microsoft. The resulting
@@ -961,6 +1014,16 @@ export default function App() {
 
     function renderNoteTab() {
       if (parsedNote) {
+        if (parsedNote.sections.length === 0) {
+          return (
+            <>
+              <Text style={styles.noteTitle}>{parsedNote.title}</Text>
+              <Text style={styles.dragonBodyText}>
+                Dragon Copilot didn't find anything to include in this note — this is expected for very short or silent recordings.
+              </Text>
+            </>
+          );
+        }
         return (
           <>
             <Text style={styles.noteTitle}>{parsedNote.title}</Text>
@@ -981,6 +1044,13 @@ export default function App() {
 
     function renderTranscriptTab() {
       if (parsedTranscript) {
+        if (parsedTranscript.turns.length === 0) {
+          return (
+            <Text style={styles.dragonBodyText}>
+              Dragon Copilot didn't capture any speech in this recording — this is expected for very short or silent recordings.
+            </Text>
+          );
+        }
         return parsedTranscript.turns.map((turn) => (
           <View key={turn.id} style={styles.noteSection}>
             <Text style={styles.noteSectionTitle}>{turn.speaker}</Text>
@@ -1164,6 +1234,8 @@ export default function App() {
             </View>
           </View>
         )}
+        {renderDebugLogModal()}
+        {renderDragonFrameModal()}
       </SafeAreaView>
     );
   }
