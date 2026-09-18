@@ -53,4 +53,13 @@ async function getAasToken() {
   return token.token;
 }
 
-module.exports = { getDragonApiToken, getAasToken, describeTokenForAllowList };
+// Gets a bearer token for the EHR integration service's Token Launch API —
+// a third scope, confirmed from Microsoft's Token Launch docs. This is the
+// "partner-issued access token" a Token Launch call embeds in its request
+// body, not a header on the request to Microsoft.
+async function getConnectorAccessToken() {
+  const token = await getCredential().getToken(config.connectorAccessScope());
+  return token.token;
+}
+
+module.exports = { getDragonApiToken, getAasToken, getConnectorAccessToken, describeTokenForAllowList };

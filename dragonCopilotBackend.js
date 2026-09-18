@@ -87,4 +87,74 @@ async function submitRecording(audioUri, audioName, patient, existingCorrelation
   return json.correlationId ?? correlationId;
 }
 
-export const DragonCopilotBackend = { missingConfigKeys, submitRecording };
+// Fetches what's needed to launch Dragon Copilot's own web UI via its
+// Token Launch API — a server-issued access token (needs the Entra client
+// secret, which the app itself never holds) plus the Microsoft-assigned
+// partner/org/product/EHR identifiers, which live only in the dde-webhook
+// server's own .env, not the app's.
+async function getTokenLaunchInfo() {
+  const missing = missingConfigKeys();
+  if (missing.length > 0) {
+    throw new Error(`Dragon Copilot backend isn't configured: missing ${missing.join(', ')}`);
+  }
+  const response = await fetch(`${DDE_BASE_URL.replace(/\/$/, '')}/api/tokenLaunchInfo`, {
+    headers: { 'x-app-secret': DDE_APP_SECRET },
+  });
+  if (!response.ok) {
+    throw new Error(`Token Launch info fetch failed (${response.status}): ${await response.text()}`);
+  }
+  return response.json();
+}
+
+// Opens Dragon Copilot's own web UI in a new browser tab, seeded with this
+// encounter's correlationId and (if available) the Epic patient's context,
+// per Microsoft's Token Launch API. That API's own docs say a real REST
+// client (fetch/Postman/etc.) isn't recommended — it works via the
+// POST-REDIRECT-GET pattern, so the browser itself needs to submit the
+// form and follow the resulting redirect to actually show the page. A
+// fetch() call would just receive the redirect response as inert data
+// instead of navigating anywhere. That's also why this only works on the
+// web build — there's no such form-submission/new-tab mechanism natively.
+async function launchDragonCopilot({ correlationId, patient, launchType = 'copilot' }) {
+  if (Platform.OS !== 'web') {
+    throw new Error('Launching Dragon Copilot this way only works in the web app for now.');
+  }
+  const info = await getTokenLaunchInfo();
+
+  const payload = {
+    partnerId: info.partnerId,
+    orgId: info.orgId,
+    productId: info.productId,
+    clientName: info.clientName,
+    correlationId,
+    launchType,
+    accessToken: info.accessToken,
+  };
+  if (patient?.id) payload.patient = `Patient/${patient.id}`;
+  if (patient?.['Patient Name']) payload.patientName = patient['Patient Name'];
+  if (patient?.DOB) payload.patientDob = patient.DOB;
+  if (patient?.MRN) payload.patientMrn = patient.MRN;
+  if (patient?.Gender) payload.patientGender = patient.Gender;
+
+  const form = document.createElement('form');
+  form.method = 'POST';
+  form.action = `${info.ehrBaseUrl.replace(/\/$/, '')}/api/${encodeURIComponent(info.ehr)}/token-launch`;
+  form.target = '_blank';
+
+  const input = document.createElement('input');
+  input.type = 'hidden';
+  input.name = 'data';
+  input.value = JSON.stringify(payload);
+  form.appendChild(input);
+
+  document.body.appendChild(form);
+  form.submit();
+  document.body.removeChild(form);
+}
+
+export const DragonCopilotBackend = {
+  missingConfigKeys,
+  submitRecording,
+  getTokenLaunchInfo,
+  launchDragonCopilot,
+};

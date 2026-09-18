@@ -58,6 +58,35 @@ module.exports = {
   dragonProductId: () =>
     process.env.DRAGON_PRODUCT_ID || '4f939ade-287a-416d-8484-1e64013039dd',
 
+  // A *third* audience, this time for the EHR integration service's Token
+  // Launch API (opens Dragon Copilot's own web UI in a new tab, seeded with
+  // patient/encounter context) — confirmed from Microsoft's Token Launch
+  // docs. Notably the same App ID GUID as the AAS scope above, just a
+  // different named scope — if this comes back Unauthorized, that scope
+  // likely needs to be consented/allow-listed for this app registration
+  // separately from AAS's ".default".
+  connectorAccessScope: () =>
+    process.env.CONNECTOR_ACCESS_SCOPE || '40d36082-d340-492f-a5af-e42ef68f4b2b/Connector.Access',
+
+  // Region base URL for Token Launch — "us" to match every other
+  // confirmed-working endpoint for this account.
+  dragonEhrBaseUrl: () =>
+    process.env.DRAGON_EHR_BASE_URL || 'https://dragon-ehr.copilot.us.dragon.com',
+
+  // The EHR system identifier Token Launch expects in its URL path
+  // (/api/{ehr}/token-launch). Defaults to this account's Clinical app
+  // connector name from the Dragon Admin Center (Overview tab), which
+  // matches the Token Launch docs' own description of this field ("the
+  // name of the EHR system making the call") — if calls come back with
+  // error 26 (EhrIdMissing) or otherwise can't resolve the connector, try
+  // the connector's "App ID" GUID instead (also shown on that Overview
+  // tab) via an override.
+  dragonEhrId: () => process.env.DRAGON_EHR_ID || 'doctor-robbie',
+
+  // Purely descriptive — shown as "clientName" on each Token Launch call,
+  // not a Microsoft-assigned identifier.
+  dragonClientName: () => process.env.DRAGON_CLIENT_NAME || 'Doctor Robbie',
+
   // Table Storage connection — reuses the storage account every Function
   // App already has (AzureWebJobsStorage) unless overridden.
   storageConnectionString: () =>

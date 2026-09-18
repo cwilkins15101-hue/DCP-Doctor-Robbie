@@ -48,6 +48,21 @@ tries a few common field names and falls back to showing the raw JSON.
    | `ENTRA_CLIENT_SECRET` | the secret value from step 3 |
    | `DRAGON_API_SCOPE` | `105be974-d66d-43c9-b813-57a967bbfd21/.default` (same value for non-production and production, per Microsoft's docs) |
 
+   For the "Launch Dragon Copilot" button (Token Launch API — opens Dragon
+   Copilot's own web UI in a new tab, seeded with patient/encounter
+   context), also add:
+
+   | Name | Value |
+   |---|---|
+   | `DRAGON_PARTNER_GUID` | your Dragon Copilot partner GUID |
+   | `DRAGON_ENVIRONMENT_ID` | your Dragon Copilot customer/org GUID |
+   | `DRAGON_PRODUCT_ID` | your Dragon Copilot product GUID |
+   | `DRAGON_EHR_ID` | defaults to `doctor-robbie` (this account's Clinical app connector name — Dragon Admin Center > Clinical app connector > Overview); if Token Launch calls fail (e.g. error 26, EhrIdMissing), try that same Overview tab's "App ID" GUID instead |
+
+   `CONNECTOR_ACCESS_SCOPE`, `DRAGON_EHR_BASE_URL`, and `DRAGON_CLIENT_NAME`
+   all have working defaults and only need overriding if Microsoft tells
+   you otherwise.
+
 ## Deploying the code
 
 From this folder:

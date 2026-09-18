@@ -247,6 +247,7 @@ export default function App() {
   const [expandedNoteId, setExpandedNoteId] = useState(null);
   const [noteTexts, setNoteTexts] = useState({}); // { [noteId]: { loading, text, error } }
   const [compilingForDragon, setCompilingForDragon] = useState(false);
+  const [launchingDragonCopilot, setLaunchingDragonCopilot] = useState(false);
 
   // Dragon Copilot Summary — a left-side slide-in panel showing the
   // compiled IPS + Clinical Notes text (mirrors the Epic Chart Summary
@@ -704,6 +705,27 @@ export default function App() {
     setTimeout(() => setDragonSummaryCopied(false), 2000);
   }
 
+  // Opens Dragon Copilot's own web app in a new tab, seeded with this
+  // encounter's correlationId and (if the patient came from Epic) their
+  // FHIR patient context — Microsoft's Token Launch API. Requires a
+  // correlationId (i.e. at least one recording already submitted), since
+  // that's how Dragon Copilot ties the new tab back to this encounter.
+  async function handleLaunchDragonCopilot() {
+    if (!dragonCorrelationId) return;
+    setLaunchingDragonCopilot(true);
+    try {
+      await DragonCopilotBackend.launchDragonCopilot({
+        correlationId: dragonCorrelationId,
+        patient: selectedPatient,
+        launchType: 'copilot',
+      });
+    } catch (err) {
+      notify('Could not launch Dragon Copilot', String(err?.message ?? err));
+    } finally {
+      setLaunchingDragonCopilot(false);
+    }
+  }
+
   function handleDiscard() {
     setAudioUri(null);
     setAudioName(null);
@@ -903,6 +925,29 @@ export default function App() {
           <Text style={styles.tsTitle}>Dragon Copilot</Text>
           <View style={{ width: 80 }} />
         </View>
+
+        {/* Opens Dragon Copilot's own web app in a new tab via Token
+            Launch, seeded with this encounter's correlationId and Epic
+            patient context. Only meaningful in the web build — there's no
+            new-tab/form-submission concept on native. */}
+        {Platform.OS === 'web' && dragonCorrelationId && (
+          <View style={styles.dragonLaunchRow}>
+            <TouchableOpacity
+              style={[styles.launchDragonButton, launchingDragonCopilot && styles.buttonDisabled]}
+              onPress={handleLaunchDragonCopilot}
+              disabled={launchingDragonCopilot}
+            >
+              {launchingDragonCopilot ? (
+                <ActivityIndicator color={C.blue} size="small" />
+              ) : (
+                <Ionicons name="open-outline" size={16} color={C.blue} />
+              )}
+              <Text style={styles.launchDragonButtonText}>
+                {launchingDragonCopilot ? 'Launching…' : 'Launch Dragon Copilot'}
+              </Text>
+            </TouchableOpacity>
+          </View>
+        )}
 
         {missingKeys.length > 0 ? (
           <ScrollView contentContainerStyle={styles.dragonBody}>
@@ -1736,6 +1781,16 @@ const styles = StyleSheet.create({
   backButton: { width: 80 },
   backButtonText: { color: C.gold, fontSize: 16, fontWeight: '600' },
   tsTitle: { fontSize: 17, fontWeight: '700', color: C.blue },
+  dragonLaunchRow: {
+    paddingHorizontal: 16, paddingTop: 12,
+    borderBottomWidth: 1, borderBottomColor: C.border, backgroundColor: C.bg,
+  },
+  launchDragonButton: {
+    flexDirection: 'row', alignSelf: 'flex-start', alignItems: 'center', justifyContent: 'center',
+    backgroundColor: C.blueLight, borderWidth: 1, borderColor: C.blueBorder, borderRadius: 20,
+    paddingVertical: 8, paddingHorizontal: 16, marginBottom: 12, gap: 8,
+  },
+  launchDragonButtonText: { color: C.blue, fontSize: 13, fontWeight: '700' },
   dragonNoteBody: { flex: 1, flexDirection: 'row' },
   dragonMainPane: { flex: 1 },
   recordingsPanel: {

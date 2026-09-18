@@ -47,6 +47,10 @@ function toAppPatient(resource) {
     'Patient Name': nameFromFhir(resource),
     MRN: mrnFromFhir(resource),
     DOB: resource.birthDate ?? '',
+    // FHIR's gender values (male/female/other/unknown) match Dragon
+    // Copilot's Token Launch API's patientGender values exactly, so this
+    // is passed straight through with no translation.
+    Gender: resource.gender ?? '',
     'Visit Date': '',
     'Visit Time': '',
     'Chief Complaint': '',
