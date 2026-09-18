@@ -261,11 +261,6 @@ export default function App() {
   const [noteTexts, setNoteTexts] = useState({}); // { [noteId]: { loading, text, error } }
   const [compilingForDragon, setCompilingForDragon] = useState(false);
   const [launchingDragonCopilot, setLaunchingDragonCopilot] = useState(false);
-  // Trying an embedded-iframe launch instead of a new tab — whether this
-  // actually renders anything depends on whether Dragon Copilot's own
-  // server allows itself to be framed (see dragonCopilotBackend.js).
-  const [dragonFrameVisible, setDragonFrameVisible] = useState(false);
-  const DRAGON_FRAME_NAME = 'dragonEmbedFrame';
 
   // Dragon Copilot Summary — a left-side slide-in panel showing the
   // compiled IPS + Clinical Notes text (mirrors the Epic Chart Summary
@@ -736,32 +731,28 @@ export default function App() {
     }
   }
 
-  // Opens Dragon Copilot's own web app inside an embedded iframe, seeded
-  // with this encounter's correlationId and (if the patient came from
-  // Epic) their FHIR patient context — Microsoft's Token Launch API.
-  // Requires a correlationId (i.e. at least one recording already
-  // submitted), since that's how Dragon Copilot ties the launch back to
-  // this encounter. Whether anything actually renders in the iframe below
-  // depends entirely on Dragon Copilot's own server allowing itself to be
-  // framed — see dragonCopilotBackend.js.
+  // Opens Dragon Copilot's own web app in a new tab, seeded with this
+  // encounter's correlationId and (if the patient came from Epic) their
+  // FHIR patient context — Microsoft's Token Launch API. Requires a
+  // correlationId (i.e. at least one recording already submitted), since
+  // that's how Dragon Copilot ties the new tab back to this encounter.
+  // An embedded-iframe version was tried and worked for basic display, but
+  // Dragon Copilot's own app redirects to a full separate window anyway
+  // once it detects no "native mic access" (a local desktop app + browser
+  // extension Dragon Copilot itself requires for in-browser dictation, per
+  // Microsoft's docs — unrelated to anything configurable from here), so a
+  // real new-tab launch gives the same result with less complexity.
   async function handleLaunchDragonCopilot() {
     if (!dragonCorrelationId) return;
     setLaunchingDragonCopilot(true);
-    setDragonFrameVisible(true);
     try {
-      // The iframe needs to actually be mounted before the form below
-      // submits, since it targets it by name — otherwise the browser
-      // can't find a matching frame yet and opens a new window instead.
-      await new Promise((resolve) => requestAnimationFrame(resolve));
       await DragonCopilotBackend.launchDragonCopilot({
         correlationId: dragonCorrelationId,
         patient: selectedPatient,
         launchType: 'copilot',
-        target: DRAGON_FRAME_NAME,
       });
     } catch (err) {
       notify('Could not launch Dragon Copilot', String(err?.message ?? err));
-      setDragonFrameVisible(false);
     } finally {
       setLaunchingDragonCopilot(false);
     }
@@ -1199,32 +1190,6 @@ export default function App() {
                 </ScrollView>
               )}
             </View>
-
-            {/* Side-by-side, not an overlay — the results stay visible on
-                the left while Dragon Copilot's own web app runs in this
-                iframe on the right. Needs allow="microphone" or the
-                browser blocks getUserMedia calls inside the iframe
-                entirely (confirmed live — without it, Dragon Copilot
-                detects the missing mic access and opens a separate
-                window instead of working in-frame). */}
-            {dragonFrameVisible && (
-              <View style={styles.dragonFramePane}>
-                <View style={styles.dragonFramePaneHeader}>
-                  <Text style={styles.dragonFramePaneTitle}>Dragon Copilot</Text>
-                  <TouchableOpacity onPress={() => setDragonFrameVisible(false)}>
-                    <Text style={styles.modalClose}>Close</Text>
-                  </TouchableOpacity>
-                </View>
-                {Platform.OS === 'web' && (
-                  <iframe
-                    name={DRAGON_FRAME_NAME}
-                    title="Dragon Copilot"
-                    allow="microphone"
-                    style={{ flex: 1, border: 'none', width: '100%', height: '100%' }}
-                  />
-                )}
-              </View>
-            )}
           </View>
         )}
         {renderDebugLogModal()}
@@ -1943,13 +1908,6 @@ const styles = StyleSheet.create({
   launchDragonButtonText: { color: C.blue, fontSize: 13, fontWeight: '700' },
   dragonNoteBody: { flex: 1, flexDirection: 'row' },
   dragonMainPane: { flex: 1 },
-  dragonFramePane: { flex: 1, borderLeftWidth: 1, borderLeftColor: C.border },
-  dragonFramePaneHeader: {
-    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
-    paddingHorizontal: 16, paddingVertical: 12,
-    borderBottomWidth: 1, borderBottomColor: C.border, backgroundColor: C.bg,
-  },
-  dragonFramePaneTitle: { fontSize: 15, fontWeight: '700', color: C.blue },
   recordingsPanel: {
     width: 116, borderRightWidth: 1, borderRightColor: C.border,
     backgroundColor: C.bg, paddingTop: 12, paddingHorizontal: 8,
