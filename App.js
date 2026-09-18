@@ -943,6 +943,12 @@ export default function App() {
             <iframe
               name={DRAGON_FRAME_NAME}
               title="Dragon Copilot"
+              // Without this, the browser blocks getUserMedia (mic) calls
+              // from inside the iframe entirely — confirmed live: Dragon
+              // Copilot itself detected the missing mic access and fell
+              // back to opening a separate window instead of working
+              // in-frame. This delegates that permission to the iframe.
+              allow="microphone"
               style={{ flex: 1, border: 'none', width: '100%', height: '100%' }}
             />
           )}
