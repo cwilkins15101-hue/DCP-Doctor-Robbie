@@ -103,10 +103,11 @@ function formatClockTime(date) {
 // webhook delivery). resources[] holds the note's sections, each with a
 // display name and text — legitimately empty ("") for sections the
 // encounter didn't cover, which is common for short recordings and NOT a
-// sign the payload shape is wrong. Returns null only when the shape itself
-// doesn't match (so callers can fall back to raw JSON as a last resort);
-// an empty sections array is a valid result the caller should render as
-// "nothing here," not treat as unparseable.
+// sign the payload shape is wrong. Returns every section, blank or not —
+// callers decide whether to show the blank ones (see the "Display
+// additional note sections" toggle) rather than this function silently
+// dropping them. Returns null only when the shape itself doesn't match
+// (so callers can fall back to raw JSON as a last resort).
 // ---------------------------------------------------------------------------
 function parseDragonNote(noteBody) {
   try {
@@ -114,13 +115,11 @@ function parseDragonNote(noteBody) {
     if (typeof raw !== 'string') return null;
     const payload = JSON.parse(raw);
     if (!Array.isArray(payload.resources)) return null;
-    const sections = payload.resources
-      .map((r) => ({
-        id: r.legacy_id,
-        title: r.context?.display_description || r.legacy_id,
-        content: (r.content || '').replace(/\r\n/g, '\n').trim(),
-      }))
-      .filter((s) => s.content.length > 0);
+    const sections = payload.resources.map((r) => ({
+      id: r.legacy_id,
+      title: r.context?.display_description || r.legacy_id,
+      content: (r.content || '').replace(/\r\n/g, '\n').trim(),
+    }));
     return { title: payload.document?.title || 'Clinical Note', sections };
   } catch {
     return null;
@@ -292,6 +291,11 @@ export default function App() {
   // otherwise so in-progress edits survive re-renders and repeat polls of
   // the same underlying data.
   const [editedNoteSections, setEditedNoteSections] = useState({});
+  // Off by default — Dragon Copilot's note template includes sections the
+  // encounter didn't cover (blank content); most of the time those are
+  // just noise, but a physician may want to see and fill them in directly
+  // (e.g. after adding more detail via Dragon Copilot's own web app).
+  const [showAllNoteSections, setShowAllNoteSections] = useState(false);
 
   // One encounter (correlationId) can have multiple recordings added to it
   // — each entry here is just a local log of what's been submitted so far,
@@ -991,34 +995,50 @@ export default function App() {
 
     function renderNoteTab() {
       if (parsedNote) {
-        if (parsedNote.sections.length === 0) {
-          return (
-            <>
-              <Text style={styles.noteTitle}>{parsedNote.title}</Text>
-              <Text style={styles.dragonBodyText}>
-                Dragon Copilot didn't find anything to include in this note — this is expected for very short or silent recordings.
-              </Text>
-            </>
-          );
-        }
+        // Dragon Copilot's note template includes sections the encounter
+        // didn't cover at all (blank content) — hidden by default since
+        // most of the time they're just noise, but a physician can reveal
+        // them to fill in manually or after adding detail via Dragon
+        // Copilot's own web app.
+        const visibleSections = showAllNoteSections
+          ? parsedNote.sections
+          : parsedNote.sections.filter((s) => s.content.length > 0);
         return (
           <>
             <Text style={styles.noteTitle}>{parsedNote.title}</Text>
-            {parsedNote.sections.map((section) => (
-              <View key={section.id} style={styles.noteSection}>
-                <Text style={styles.noteSectionTitle}>{section.title}</Text>
-                <TextInput
-                  multiline
-                  scrollEnabled={false}
-                  textAlignVertical="top"
-                  value={editedNoteSections[section.id] ?? section.content}
-                  onChangeText={(text) =>
-                    setEditedNoteSections((prev) => ({ ...prev, [section.id]: text }))
-                  }
-                  style={styles.noteSectionInput}
-                />
-              </View>
-            ))}
+            {parsedNote.sections.length > 0 && (
+              <TouchableOpacity
+                style={styles.noteSectionsToggleRow}
+                onPress={() => setShowAllNoteSections((v) => !v)}
+                activeOpacity={0.7}
+              >
+                <View style={[styles.checkbox, showAllNoteSections && styles.checkboxChecked]}>
+                  {showAllNoteSections && <Ionicons name="checkmark" size={12} color={C.white} />}
+                </View>
+                <Text style={styles.noteSectionsToggleText}>Display additional note sections</Text>
+              </TouchableOpacity>
+            )}
+            {visibleSections.length === 0 ? (
+              <Text style={styles.dragonBodyText}>
+                Dragon Copilot didn't find anything to include in this note — this is expected for very short or silent recordings.
+              </Text>
+            ) : (
+              visibleSections.map((section) => (
+                <View key={section.id} style={styles.noteSection}>
+                  <Text style={styles.noteSectionTitle}>{section.title}</Text>
+                  <TextInput
+                    multiline
+                    scrollEnabled={false}
+                    textAlignVertical="top"
+                    value={editedNoteSections[section.id] ?? section.content}
+                    onChangeText={(text) =>
+                      setEditedNoteSections((prev) => ({ ...prev, [section.id]: text }))
+                    }
+                    style={styles.noteSectionInput}
+                  />
+                </View>
+              ))
+            )}
           </>
         );
       }
@@ -1139,11 +1159,15 @@ export default function App() {
                 {renderStatusBadge('Note', noteIsCurrent)}
                 {renderStatusBadge('Transcript', transcriptIsCurrent)}
               </View>
-              {artifacts && (!noteIsCurrent || !transcriptIsCurrent) && (
+              {/* Always available, even once both are "current" — lets a
+                  physician pull in edits made directly in Dragon Copilot's
+                  own web app (see "Launch Dragon Copilot") without needing
+                  to add another recording just to re-trigger polling. */}
+              {artifacts && (
                 <View style={styles.checkNowRow}>
                   <TouchableOpacity onPress={handleCheckDdeResult} disabled={dragonDdeChecking}>
                     <Text style={styles.debugLinkText}>
-                      {dragonDdeChecking ? 'Checking…' : 'Check now for updated results'}
+                      {dragonDdeChecking ? 'Checking…' : 'Check for updates from Dragon Copilot'}
                     </Text>
                   </TouchableOpacity>
                   {!!dragonError && <Text style={styles.dragonErrorText}>{dragonError}</Text>}
@@ -1186,6 +1210,7 @@ export default function App() {
                         setPollGeneration(0);
                         setNoteTab('note');
                         setEditedNoteSections({});
+                        setShowAllNoteSections(false);
                         setDuration(0);
                       }}
                     >
@@ -2012,4 +2037,11 @@ const styles = StyleSheet.create({
     fontSize: 15, color: C.textDark, lineHeight: 22,
     padding: 0, borderWidth: 0,
   },
+  noteSectionsToggleRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 16 },
+  checkbox: {
+    width: 18, height: 18, borderRadius: 4, borderWidth: 1.5, borderColor: C.blueBorder,
+    alignItems: 'center', justifyContent: 'center', backgroundColor: C.white,
+  },
+  checkboxChecked: { backgroundColor: C.blue, borderColor: C.blue },
+  noteSectionsToggleText: { fontSize: 13, color: C.textMid, fontWeight: '600' },
 });
