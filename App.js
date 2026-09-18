@@ -286,6 +286,12 @@ export default function App() {
   const [dragonDdeChecking, setDragonDdeChecking] = useState(false);
   const [dragonDdeResult, setDragonDdeResult] = useState(null);
   const [noteTab, setNoteTab] = useState('note');
+  // Physician edits to the note's sections, keyed by section id — seeded
+  // from the parsed note whenever the server actually delivers new content
+  // (see the effect below keyed on noteResult?.storedAt), left alone
+  // otherwise so in-progress edits survive re-renders and repeat polls of
+  // the same underlying data.
+  const [editedNoteSections, setEditedNoteSections] = useState({});
 
   // One encounter (correlationId) can have multiple recordings added to it
   // — each entry here is just a local log of what's been submitted so far,
@@ -430,6 +436,19 @@ export default function App() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [transcriptReady, noteReady]);
+
+  // Re-seeds edited section text only when the server actually delivers
+  // new note content (storedAt only changes on a real webhook delivery,
+  // not on every poll tick that finds nothing new) — so typing in a
+  // section survives repeat polls without being clobbered.
+  useEffect(() => {
+    const parsed = noteResult ? parseDragonNote(noteResult) : null;
+    if (!parsed) return;
+    const seeded = {};
+    parsed.sections.forEach((section) => { seeded[section.id] = section.content; });
+    setEditedNoteSections(seeded);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [noteResult?.storedAt]);
 
   useEffect(() => {
     if (isRecording) {
@@ -988,7 +1007,16 @@ export default function App() {
             {parsedNote.sections.map((section) => (
               <View key={section.id} style={styles.noteSection}>
                 <Text style={styles.noteSectionTitle}>{section.title}</Text>
-                <Text style={styles.noteSectionContent} selectable>{section.content}</Text>
+                <TextInput
+                  multiline
+                  scrollEnabled={false}
+                  textAlignVertical="top"
+                  value={editedNoteSections[section.id] ?? section.content}
+                  onChangeText={(text) =>
+                    setEditedNoteSections((prev) => ({ ...prev, [section.id]: text }))
+                  }
+                  style={styles.noteSectionInput}
+                />
               </View>
             ))}
           </>
@@ -1157,6 +1185,7 @@ export default function App() {
                         setRecordings([]);
                         setPollGeneration(0);
                         setNoteTab('note');
+                        setEditedNoteSections({});
                         setDuration(0);
                       }}
                     >
@@ -1979,4 +2008,8 @@ const styles = StyleSheet.create({
     letterSpacing: 0.5, marginBottom: 6,
   },
   noteSectionContent: { fontSize: 15, color: C.textDark, lineHeight: 22 },
+  noteSectionInput: {
+    fontSize: 15, color: C.textDark, lineHeight: 22,
+    padding: 0, borderWidth: 0,
+  },
 });
