@@ -856,6 +856,48 @@ export default function App() {
   }
 
   // =========================================================================
+  // Debug Log modal — extracted so both the sign-in gate below and the
+  // main app can show it. Signing in logs the exact redirect URI Microsoft
+  // rejected (see msftAuth.js) here, so this needs to be reachable before
+  // sign-in succeeds, not just after.
+  function renderDebugLogModal() {
+    return (
+      <Modal
+        visible={logModalVisible}
+        animationType="slide"
+        presentationStyle="pageSheet"
+        onRequestClose={() => setLogModalVisible(false)}
+      >
+        <SafeAreaView style={styles.modalSafeArea}>
+          <View style={styles.modalHeader}>
+            <Text style={styles.modalTitle}>Debug Log</Text>
+            <TouchableOpacity onPress={() => setLogModalVisible(false)}>
+              <Text style={styles.modalClose}>Close</Text>
+            </TouchableOpacity>
+          </View>
+          <ScrollView style={styles.logScroll} contentContainerStyle={styles.logContent}>
+            {logData.length === 0 && (
+              <Text style={styles.logEmpty}>No log entries yet.</Text>
+            )}
+            {[...logData].reverse().map(entry => (
+              <View key={entry.id} style={styles.logEntry}>
+                <Text style={styles.logMeta}>
+                  {entry.time}  <Text style={entry.level === 'error' ? styles.logLevelError : entry.level === 'warn' ? styles.logLevelWarn : styles.logLevelLog}>{entry.level}</Text>
+                </Text>
+                <Text style={styles.logMessage} selectable>{entry.message}</Text>
+              </View>
+            ))}
+          </ScrollView>
+          <View style={styles.modalFooter}>
+            <TouchableOpacity style={styles.reloadButton} onPress={() => { logEntries.length = 0; logListeners.forEach(fn => fn([])); }}>
+              <Text style={styles.reloadButtonText}>Clear Log</Text>
+            </TouchableOpacity>
+          </View>
+        </SafeAreaView>
+      </Modal>
+    );
+  }
+
   // Sign-in gate — Doctor Robbie's own login. Checked before any
   // screen-specific rendering below, so nothing else in the app is
   // reachable until a physician signs in with Microsoft. The resulting
@@ -898,7 +940,11 @@ export default function App() {
               {!!msftSignInError && <Text style={styles.dragonErrorText}>{msftSignInError}</Text>}
             </>
           )}
+          <TouchableOpacity style={styles.debugLink} onPress={() => setLogModalVisible(true)}>
+            <Text style={styles.debugLinkText}>View Log</Text>
+          </TouchableOpacity>
         </View>
+        {renderDebugLogModal()}
       </SafeAreaView>
     );
   }
@@ -1298,40 +1344,7 @@ export default function App() {
           </>
       </View>
 
-      {/* Debug log modal */}
-      <Modal
-        visible={logModalVisible}
-        animationType="slide"
-        presentationStyle="pageSheet"
-        onRequestClose={() => setLogModalVisible(false)}
-      >
-        <SafeAreaView style={styles.modalSafeArea}>
-          <View style={styles.modalHeader}>
-            <Text style={styles.modalTitle}>Debug Log</Text>
-            <TouchableOpacity onPress={() => setLogModalVisible(false)}>
-              <Text style={styles.modalClose}>Close</Text>
-            </TouchableOpacity>
-          </View>
-          <ScrollView style={styles.logScroll} contentContainerStyle={styles.logContent}>
-            {logData.length === 0 && (
-              <Text style={styles.logEmpty}>No log entries yet.</Text>
-            )}
-            {[...logData].reverse().map(entry => (
-              <View key={entry.id} style={styles.logEntry}>
-                <Text style={styles.logMeta}>
-                  {entry.time}  <Text style={entry.level === 'error' ? styles.logLevelError : entry.level === 'warn' ? styles.logLevelWarn : styles.logLevelLog}>{entry.level}</Text>
-                </Text>
-                <Text style={styles.logMessage} selectable>{entry.message}</Text>
-              </View>
-            ))}
-          </ScrollView>
-          <View style={styles.modalFooter}>
-            <TouchableOpacity style={styles.reloadButton} onPress={() => { logEntries.length = 0; logListeners.forEach(fn => fn([])); }}>
-              <Text style={styles.reloadButtonText}>Clear Log</Text>
-            </TouchableOpacity>
-          </View>
-        </SafeAreaView>
-      </Modal>
+      {renderDebugLogModal()}
 
       {/* Patient list panel — same right-side slide-in treatment as the
           Epic Chart Summary panel, with a header that reflects whichever
