@@ -53,13 +53,11 @@ async function getAasToken() {
   return token.token;
 }
 
-// Gets a bearer token for the EHR integration service's Token Launch API —
-// a third scope, confirmed from Microsoft's Token Launch docs. This is the
-// "partner-issued access token" a Token Launch call embeds in its request
-// body, not a header on the request to Microsoft.
-async function getConnectorAccessToken() {
-  const token = await getCredential().getToken(config.connectorAccessScope());
-  return token.token;
-}
+// Deliberately no app-only token getter for Token Launch (Connector.Access)
+// here — confirmed via a live 401 that Dragon Copilot's Token Launch API
+// rejects an app-only client-credentials token outright. It requires a
+// delegated token for an actual signed-in physician, which only the app
+// itself can obtain (see msftAuth.js) — this server never holds a
+// physician's credentials.
 
-module.exports = { getDragonApiToken, getAasToken, getConnectorAccessToken, describeTokenForAllowList };
+module.exports = { getDragonApiToken, getAasToken, describeTokenForAllowList };

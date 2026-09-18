@@ -58,17 +58,6 @@ module.exports = {
   dragonProductId: () =>
     process.env.DRAGON_PRODUCT_ID || '4f939ade-287a-416d-8484-1e64013039dd',
 
-  // A *third* audience, this time for the EHR integration service's Token
-  // Launch API (opens Dragon Copilot's own web UI in a new tab, seeded with
-  // patient/encounter context). Same App ID GUID as the AAS scope above —
-  // the Token Launch docs name this permission "Connector.Access", but
-  // Azure AD's client-credentials flow always requests <resource>/.default
-  // (confirmed via AADSTS1002012 when ".../Connector.Access" was passed
-  // directly) — ".default" requests whatever's been granted/consented for
-  // this app registration, Connector.Access included.
-  connectorAccessScope: () =>
-    process.env.CONNECTOR_ACCESS_SCOPE || '40d36082-d340-492f-a5af-e42ef68f4b2b/.default',
-
   // Region base URL for Token Launch — "us" to match every other
   // confirmed-working endpoint for this account.
   dragonEhrBaseUrl: () =>

@@ -1,12 +1,17 @@
 // ---------------------------------------------------------------------------
 // Client for Doctor Robbie's own Dragon Copilot backend (see /dde-webhook).
-// Submits a finished recording directly to our server, which forwards it to
-// Dragon Copilot's Ambient Audio Streaming API using its own app-only
-// credentials. The physician using Doctor Robbie never signs in to
-// Microsoft or sees any Microsoft UI — this is a plain HTTP upload, so it
-// works identically on native (iOS/Android) and web.
+// submitRecording() uploads a finished recording directly to our server,
+// which forwards it to Dragon Copilot's Ambient Audio Streaming API using
+// its own app-only credentials — a plain HTTP upload, no Microsoft sign-in
+// involved, working identically on native (iOS/Android) and web.
+//
+// launchDragonCopilot() is different: it uses the physician's own signed-in
+// Microsoft identity (see msftAuth.js, Doctor Robbie's actual login) rather
+// than dde-webhook's app-only credentials, since Dragon Copilot's Token
+// Launch API specifically requires a delegated (real signed-in user) token.
 // ---------------------------------------------------------------------------
 import { Platform } from 'react-native';
+import { MsftAuth } from './msftAuth';
 
 const DDE_BASE_URL = process.env.EXPO_PUBLIC_DDE_SERVER_URL;
 const DDE_APP_SECRET = process.env.EXPO_PUBLIC_DDE_APP_SECRET;
@@ -87,11 +92,13 @@ async function submitRecording(audioUri, audioName, patient, existingCorrelation
   return json.correlationId ?? correlationId;
 }
 
-// Fetches what's needed to launch Dragon Copilot's own web UI via its
-// Token Launch API — a server-issued access token (needs the Entra client
-// secret, which the app itself never holds) plus the Microsoft-assigned
-// partner/org/product/EHR identifiers, which live only in the dde-webhook
-// server's own .env, not the app's.
+// Fetches the Microsoft-assigned partner/org/product/EHR identifiers
+// needed to launch Dragon Copilot's own web UI via its Token Launch API —
+// these live only in the dde-webhook server's own .env, not the app's. The
+// actual accessToken for that call comes from MsftAuth instead (the
+// physician's own delegated sign-in) — Dragon Copilot's Token Launch
+// rejects a server-minted app-only token outright (confirmed via a live
+// 401), so dde-webhook no longer mints one here.
 async function getTokenLaunchInfo() {
   const missing = missingConfigKeys();
   if (missing.length > 0) {
@@ -119,7 +126,7 @@ async function launchDragonCopilot({ correlationId, patient, launchType = 'copil
   if (Platform.OS !== 'web') {
     throw new Error('Launching Dragon Copilot this way only works in the web app for now.');
   }
-  const info = await getTokenLaunchInfo();
+  const [info, accessToken] = await Promise.all([getTokenLaunchInfo(), MsftAuth.getAccessToken()]);
 
   const payload = {
     partnerId: info.partnerId,
@@ -128,7 +135,7 @@ async function launchDragonCopilot({ correlationId, patient, launchType = 'copil
     clientName: info.clientName,
     correlationId,
     launchType,
-    accessToken: info.accessToken,
+    accessToken,
   };
   if (patient?.id) payload.patient = `Patient/${patient.id}`;
   if (patient?.['Patient Name']) payload.patientName = patient['Patient Name'];

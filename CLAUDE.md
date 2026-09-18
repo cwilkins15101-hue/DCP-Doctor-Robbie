@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What is Doctor Robbie
 
-Doctor Robbie is a physician productivity app prototype (no real patient data), forked from Physicker. A physician records a patient conversation on their mobile device, and the app sends it to Dragon Copilot for processing into a structured clinical note — no physician sign-in required, this is a pure server-to-server integration.
+Doctor Robbie is a physician productivity app prototype (no real patient data), forked from Physicker. A physician signs into the app with their Microsoft account (`msftAuth.js` — this is Doctor Robbie's own login, gating the whole app), records a patient conversation on their mobile device, and the app sends it to Dragon Copilot for processing into a structured clinical note. Recording *submission* itself stays a pure server-to-server integration with no per-request auth beyond that initial sign-in — see "Doctor Robbie's own login" below for why the sign-in exists at all despite that.
 
 Core pipeline: **audio recording → Doctor Robbie's own backend (dde-webhook) → Dragon Copilot Ambient Audio Streaming → Dragon Data Exchange webhook → display note**
 
@@ -26,6 +26,14 @@ npx expo run:ios        # Native build for iOS
 npx expo run:android    # Native build for Android
 ```
 
+## Doctor Robbie's own login (Microsoft sign-in)
+
+Before anything else in the app is reachable, a physician signs in with their Microsoft account (`msftAuth.js` — Authorization Code + PKCE via `expo-auth-session`, a public client, no secret; `App.js` gates its entire render tree behind `msftUser`). This uses the same Entra tenant/app registration `dde-webhook` already uses server-to-server for Ambient Audio Streaming, but it's a genuinely different, *delegated* flow — a real person authenticates and consents, rather than the app proving its own identity with a client secret.
+
+This sign-in exists specifically because of "Launch Dragon Copilot" (see below): Dragon Copilot's Token Launch API rejects an app-only, server-minted access token outright (confirmed live: 401 Unauthorized). Decoding a token from a working manual test showed `"idtyp": "user"` and a `"scp"` (delegated scope) claim, not the `"roles"` claim an app-only token carries — Token Launch specifically requires proof a physician is signed in. Rather than bolt on a separate sign-in just for that one button, the whole app's login *is* this Microsoft sign-in, so the same in-memory token (in-memory only, cleared on reload — no refresh-token persistence across app restarts, though `getAccessToken()` does silently refresh mid-session via `offline_access`) covers both.
+
+Config: `EXPO_PUBLIC_MSFT_TENANT_ID` / `EXPO_PUBLIC_MSFT_CLIENT_ID` (both default to this account's confirmed-working values) — see `.env.example`. The resulting redirect URI (logged to the in-app Debug Log on first sign-in) must be registered on that Entra app registration as a **Single-page application** redirect URI specifically — registering it under "Web" instead breaks the token exchange with a CORS error, since the exchange is called directly from browser JS with no client secret.
+
 ## Architecture
 
 The app follows a linear pipeline:
@@ -37,7 +45,7 @@ The app follows a linear pipeline:
 
 Config needed: `EXPO_PUBLIC_DDE_SERVER_URL`, `EXPO_PUBLIC_DDE_APP_SECRET`, and `EXPO_PUBLIC_DRAGON_EXTERNAL_USER_ID` (must match a registered App user ID — see above) — see `.env.example`. The `dde-webhook` server has its own separate `.env` (see `dde-webhook/.env.example` and `dde-webhook/README.md`).
 
-On the results screen, "Launch Dragon Copilot" (web build only) opens Dragon Copilot's own web app in a new tab via Microsoft's Token Launch API, seeded with the current encounter's `correlationId` and — when the patient came from Epic — their FHIR patient context (`patient`, `patientName`, `patientDob`, `patientMrn`, `patientGender`). This is a different Dragon Copilot API surface than Ambient Audio Streaming: it needs a partner access token minted server-side with a distinct Entra scope (`CONNECTOR_ACCESS_SCOPE`, `dde-webhook`'s `getConnectorAccessToken`), plus an `ehr` identifier for the URL path (`DRAGON_EHR_ID` — defaults to `doctor-robbie`, this account's Clinical app connector name in the Dragon Admin Center; try that connector's "App ID" GUID instead if calls fail). The Token Launch docs explicitly say a REST client shouldn't call the launch endpoint directly (it relies on a real browser following a 302 redirect via POST-REDIRECT-GET, opened in a new tab) — so `dragonCopilotBackend.js`'s `launchDragonCopilot` builds and submits an actual HTML `<form>` in the browser rather than using `fetch()`; `dde-webhook`'s `tokenLaunchInfo` endpoint only mints the access token and hands back the Microsoft-assigned partner/org/product/EHR identifiers that live in its own `.env`.
+On the results screen, "Launch Dragon Copilot" (web build only) opens Dragon Copilot's own web app in a new tab via Microsoft's Token Launch API, seeded with the current encounter's `correlationId` and — when the patient came from Epic — their FHIR patient context (`patient`, `patientName`, `patientDob`, `patientMrn`, `patientGender`). This is a different Dragon Copilot API surface than Ambient Audio Streaming, and its access token comes from the signed-in physician's own delegated token (`MsftAuth.getAccessToken()` — see "Doctor Robbie's own login" above), not anything `dde-webhook` mints. `dde-webhook`'s `tokenLaunchInfo` endpoint only hands back the Microsoft-assigned partner/org/product/EHR identifiers that live in its own `.env` — `DRAGON_EHR_ID` defaults to `doctor-robbie`, this account's Clinical app connector name in the Dragon Admin Center; try that connector's "App ID" GUID instead if calls fail. The Token Launch docs explicitly say a REST client shouldn't call the launch endpoint directly (it relies on a real browser following a 302 redirect via POST-REDIRECT-GET, opened in a new tab) — so `dragonCopilotBackend.js`'s `launchDragonCopilot` builds and submits an actual HTML `<form>` in the browser rather than using `fetch()`.
 
 ## Epic on FHIR sandbox (patient lookup + chart)
 

@@ -13,6 +13,7 @@ import RenderHtml from 'react-native-render-html';
 import { DragonCopilotBackend } from './dragonCopilotBackend';
 import { DdeClient } from './ddeClient';
 import { EpicClient } from './epicClient';
+import { MsftAuth } from './msftAuth';
 
 // ---------------------------------------------------------------------------
 // Color tokens — Blue & Gold
@@ -213,6 +214,13 @@ export default function App() {
 
   // Screen: 'record' | 'dragonNote'
   const [screen, setScreen] = useState('record');
+
+  // Doctor Robbie's own login — Microsoft sign-in (see msftAuth.js). In
+  // memory only, so every fresh load starts signed out; msftUser gates the
+  // whole app below, before any screen-specific rendering.
+  const [msftUser, setMsftUser] = useState(null);
+  const [msftSigningIn, setMsftSigningIn] = useState(false);
+  const [msftSignInError, setMsftSignInError] = useState('');
 
   // Permissions
   const [permissionGranted, setPermissionGranted] = useState(false);
@@ -705,6 +713,19 @@ export default function App() {
     setTimeout(() => setDragonSummaryCopied(false), 2000);
   }
 
+  async function handleMsftSignIn() {
+    setMsftSigningIn(true);
+    setMsftSignInError('');
+    try {
+      await MsftAuth.getAccessToken();
+      setMsftUser(MsftAuth.getSignedInUser());
+    } catch (err) {
+      setMsftSignInError(String(err?.message ?? err));
+    } finally {
+      setMsftSigningIn(false);
+    }
+  }
+
   // Opens Dragon Copilot's own web app in a new tab, seeded with this
   // encounter's correlationId and (if the patient came from Epic) their
   // FHIR patient context — Microsoft's Token Launch API. Requires a
@@ -832,6 +853,54 @@ export default function App() {
     if (patient['Visit Time']) parts.push(patient['Visit Time']);
     if (patient['Chief Complaint']) parts.push(patient['Chief Complaint']);
     return parts.join('  ·  ');
+  }
+
+  // =========================================================================
+  // Sign-in gate — Doctor Robbie's own login. Checked before any
+  // screen-specific rendering below, so nothing else in the app is
+  // reachable until a physician signs in with Microsoft. The resulting
+  // token is reused later for the "Launch Dragon Copilot" button — see
+  // msftAuth.js for why an interactive, delegated sign-in is required
+  // there instead of an app-only server-minted token.
+  // =========================================================================
+  if (!msftUser) {
+    const missingMsftKeys = MsftAuth.missingConfigKeys();
+    return (
+      <SafeAreaView style={styles.safeArea}>
+        <StatusBar style="auto" />
+        <View style={styles.signInContainer}>
+          <Text style={styles.title}>Doctor Robbie</Text>
+          <Text style={styles.subtitle}>Sign in to continue</Text>
+          {missingMsftKeys.length > 0 ? (
+            <View style={styles.dragonWarningBox}>
+              <Text style={styles.dragonWarningTitle}>Missing configuration</Text>
+              <Text style={styles.dragonWarningText}>Add these to your .env file:</Text>
+              {missingMsftKeys.map((key) => (
+                <Text key={key} style={styles.dragonWarningItem}>• {key}</Text>
+              ))}
+            </View>
+          ) : (
+            <>
+              <TouchableOpacity
+                style={[styles.primaryButton, styles.signInButton, msftSigningIn && styles.buttonDisabled]}
+                onPress={handleMsftSignIn}
+                disabled={msftSigningIn}
+              >
+                {msftSigningIn ? (
+                  <View style={styles.loadingRow}>
+                    <ActivityIndicator color="#fff" size="small" />
+                    <Text style={[styles.primaryButtonText, { marginLeft: 10 }]}>Signing in…</Text>
+                  </View>
+                ) : (
+                  <Text style={styles.primaryButtonText}>Sign in with Microsoft</Text>
+                )}
+              </TouchableOpacity>
+              {!!msftSignInError && <Text style={styles.dragonErrorText}>{msftSignInError}</Text>}
+            </>
+          )}
+        </View>
+      </SafeAreaView>
+    );
   }
 
   // =========================================================================
@@ -1595,6 +1664,10 @@ export default function App() {
 const styles = StyleSheet.create({
   safeArea: { flex: 1, backgroundColor: C.bg },
   container: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 24 },
+  signInContainer: {
+    flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 24, gap: 12, width: '100%',
+  },
+  signInButton: { width: '100%', maxWidth: 320, marginTop: 8 },
 
   title: { fontSize: 30, fontWeight: '800', color: C.blue, letterSpacing: 0.5, marginBottom: 2 },
   subtitle: { fontSize: 13, color: C.textMid, marginBottom: 20, letterSpacing: 0.3 },

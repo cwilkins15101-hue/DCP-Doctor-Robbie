@@ -1,12 +1,14 @@
 // Called by the Doctor Robbie app right before it launches Dragon
-// Copilot's own web UI via the Token Launch API. Mints a short-lived
-// partner access token server-side (needs the Entra client secret, which
-// the app itself never holds) and hands back the Microsoft-assigned
-// partner/org/product/EHR identifiers the launch form needs — those only
-// live in this server's .env, not the app's.
+// Copilot's own web UI via the Token Launch API. Hands back the
+// Microsoft-assigned partner/org/product/EHR identifiers the launch form
+// needs — those only live in this server's .env, not the app's. The
+// actual accessToken for that call is NOT minted here — it comes from the
+// physician's own delegated Microsoft sign-in in the app (msftAuth.js).
+// Token Launch rejects a server-minted app-only token outright (confirmed
+// via a live 401 from Dragon Copilot), so this endpoint only ever handles
+// plain identifiers, never a credential.
 const { app } = require('@azure/functions');
 const config = require('../lib/config');
-const { getConnectorAccessToken } = require('../lib/dragonApiAuth');
 const { handleCorsPreflight, withCors } = require('../lib/cors');
 
 async function handler(request, context) {
@@ -21,11 +23,9 @@ async function handler(request, context) {
   }
 
   try {
-    const accessToken = await getConnectorAccessToken();
     return withCors({
       status: 200,
       jsonBody: {
-        accessToken,
         partnerId: config.dragonPartnerGuid(),
         orgId: config.dragonEnvironmentId(),
         productId: config.dragonProductId(),

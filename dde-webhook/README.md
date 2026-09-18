@@ -59,9 +59,16 @@ tries a few common field names and falls back to showing the raw JSON.
    | `DRAGON_PRODUCT_ID` | your Dragon Copilot product GUID |
    | `DRAGON_EHR_ID` | defaults to `doctor-robbie` (this account's Clinical app connector name — Dragon Admin Center > Clinical app connector > Overview); if Token Launch calls fail (e.g. error 26, EhrIdMissing), try that same Overview tab's "App ID" GUID instead |
 
-   `CONNECTOR_ACCESS_SCOPE`, `DRAGON_EHR_BASE_URL`, and `DRAGON_CLIENT_NAME`
-   all have working defaults and only need overriding if Microsoft tells
-   you otherwise.
+   `DRAGON_EHR_BASE_URL` and `DRAGON_CLIENT_NAME` both have working
+   defaults and only need overriding if Microsoft tells you otherwise.
+
+   This server does **not** hold the access token Token Launch actually
+   needs — Dragon Copilot rejects an app-only, server-minted token for
+   that call (confirmed live: 401 Unauthorized). Token Launch requires a
+   delegated token for an actual signed-in physician, which the Doctor
+   Robbie app gets directly via its own Microsoft sign-in (`msftAuth.js`,
+   `EXPO_PUBLIC_MSFT_*` in the app's own `.env.example`) — this server only
+   ever hands back the plain partner/org/product/EHR identifiers above.
 
 ## Deploying the code
 
