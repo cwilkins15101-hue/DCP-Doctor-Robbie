@@ -918,45 +918,6 @@ export default function App() {
     );
   }
 
-  // Embedded Dragon Copilot launch — an experiment in showing Dragon
-  // Copilot's web app inside this modal via an iframe instead of a new
-  // browser tab. Whether anything actually appears here depends entirely
-  // on Dragon Copilot's own server allowing itself to be framed (an
-  // X-Frame-Options/CSP decision made on their end, invisible to our own
-  // JS) — see dragonCopilotBackend.js's launchDragonCopilot.
-  function renderDragonFrameModal() {
-    return (
-      <Modal
-        visible={dragonFrameVisible}
-        animationType="slide"
-        presentationStyle="pageSheet"
-        onRequestClose={() => setDragonFrameVisible(false)}
-      >
-        <SafeAreaView style={styles.modalSafeArea}>
-          <View style={styles.modalHeader}>
-            <Text style={styles.modalTitle}>Dragon Copilot</Text>
-            <TouchableOpacity onPress={() => setDragonFrameVisible(false)}>
-              <Text style={styles.modalClose}>Close</Text>
-            </TouchableOpacity>
-          </View>
-          {Platform.OS === 'web' && (
-            <iframe
-              name={DRAGON_FRAME_NAME}
-              title="Dragon Copilot"
-              // Without this, the browser blocks getUserMedia (mic) calls
-              // from inside the iframe entirely — confirmed live: Dragon
-              // Copilot itself detected the missing mic access and fell
-              // back to opening a separate window instead of working
-              // in-frame. This delegates that permission to the iframe.
-              allow="microphone"
-              style={{ flex: 1, border: 'none', width: '100%', height: '100%' }}
-            />
-          )}
-        </SafeAreaView>
-      </Modal>
-    );
-  }
-
   // Sign-in gate — Doctor Robbie's own login. Checked before any
   // screen-specific rendering below, so nothing else in the app is
   // reachable until a physician signs in with Microsoft. The resulting
@@ -1238,10 +1199,35 @@ export default function App() {
                 </ScrollView>
               )}
             </View>
+
+            {/* Side-by-side, not an overlay — the results stay visible on
+                the left while Dragon Copilot's own web app runs in this
+                iframe on the right. Needs allow="microphone" or the
+                browser blocks getUserMedia calls inside the iframe
+                entirely (confirmed live — without it, Dragon Copilot
+                detects the missing mic access and opens a separate
+                window instead of working in-frame). */}
+            {dragonFrameVisible && (
+              <View style={styles.dragonFramePane}>
+                <View style={styles.dragonFramePaneHeader}>
+                  <Text style={styles.dragonFramePaneTitle}>Dragon Copilot</Text>
+                  <TouchableOpacity onPress={() => setDragonFrameVisible(false)}>
+                    <Text style={styles.modalClose}>Close</Text>
+                  </TouchableOpacity>
+                </View>
+                {Platform.OS === 'web' && (
+                  <iframe
+                    name={DRAGON_FRAME_NAME}
+                    title="Dragon Copilot"
+                    allow="microphone"
+                    style={{ flex: 1, border: 'none', width: '100%', height: '100%' }}
+                  />
+                )}
+              </View>
+            )}
           </View>
         )}
         {renderDebugLogModal()}
-        {renderDragonFrameModal()}
       </SafeAreaView>
     );
   }
@@ -1957,6 +1943,13 @@ const styles = StyleSheet.create({
   launchDragonButtonText: { color: C.blue, fontSize: 13, fontWeight: '700' },
   dragonNoteBody: { flex: 1, flexDirection: 'row' },
   dragonMainPane: { flex: 1 },
+  dragonFramePane: { flex: 1, borderLeftWidth: 1, borderLeftColor: C.border },
+  dragonFramePaneHeader: {
+    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
+    paddingHorizontal: 16, paddingVertical: 12,
+    borderBottomWidth: 1, borderBottomColor: C.border, backgroundColor: C.bg,
+  },
+  dragonFramePaneTitle: { fontSize: 15, fontWeight: '700', color: C.blue },
   recordingsPanel: {
     width: 116, borderRightWidth: 1, borderRightColor: C.border,
     backgroundColor: C.bg, paddingTop: 12, paddingHorizontal: 8,
