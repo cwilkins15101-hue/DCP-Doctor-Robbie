@@ -57,7 +57,7 @@ tries a few common field names and falls back to showing the raw JSON.
    | `DRAGON_PARTNER_GUID` | your Dragon Copilot partner GUID |
    | `DRAGON_ENVIRONMENT_ID` | your Dragon Copilot customer/org GUID |
    | `DRAGON_PRODUCT_ID` | your Dragon Copilot product GUID |
-   | `DRAGON_EHR_ID` | defaults to `doctor-robbie` (this account's Clinical app connector name — Dragon Admin Center > Clinical app connector > Overview); if Token Launch calls fail (e.g. error 26, EhrIdMissing), try that same Overview tab's "App ID" GUID instead |
+   | `DRAGON_EHR_ID` | defaults to `sectra` — a placeholder EHR identifier confirmed working in this sandbox. Neither this account's Clinical app connector name (`doctor-robbie`) nor its "App ID" GUID work (both got a blanket 403): Token Launch isn't provisioned for the doctor-robbie connector yet on Microsoft's side. Swap this once Microsoft provisions it and gives you the real value |
 
    `DRAGON_EHR_BASE_URL` and `DRAGON_CLIENT_NAME` both have working
    defaults and only need overriding if Microsoft tells you otherwise.

@@ -64,14 +64,16 @@ module.exports = {
     process.env.DRAGON_EHR_BASE_URL || 'https://dragon-ehr.copilot.us.dragon.com',
 
   // The EHR system identifier Token Launch expects in its URL path
-  // (/api/{ehr}/token-launch). Defaults to this account's Clinical app
-  // connector name from the Dragon Admin Center (Overview tab), which
-  // matches the Token Launch docs' own description of this field ("the
-  // name of the EHR system making the call") — if calls come back with
-  // error 26 (EhrIdMissing) or otherwise can't resolve the connector, try
-  // the connector's "App ID" GUID instead (also shown on that Overview
-  // tab) via an override.
-  dragonEhrId: () => process.env.DRAGON_EHR_ID || 'doctor-robbie',
+  // (/api/{ehr}/token-launch). Neither this account's Clinical app
+  // connector name ("doctor-robbie") nor its "App ID" GUID work here —
+  // both got a blanket 403, meaning Token Launch isn't actually
+  // provisioned for the doctor-robbie connector yet on Microsoft's side.
+  // "sectra" is confirmed working (a shared placeholder EHR identifier in
+  // this sandbox, unrelated to Doctor Robbie specifically) — it's what's
+  // used here for now so the feature keeps working end-to-end, but it
+  // should be swapped for the real value once Microsoft provisions Token
+  // Launch for doctor-robbie and tells us what to use instead.
+  dragonEhrId: () => process.env.DRAGON_EHR_ID || 'sectra',
 
   // Purely descriptive — shown as "clientName" on each Token Launch call,
   // not a Microsoft-assigned identifier.
