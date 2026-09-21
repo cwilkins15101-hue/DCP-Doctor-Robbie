@@ -1,0 +1,574 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TeamHap Health — Chart</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --navy: #16303D;
+    --navy-2: #1E4152;
+    --teal: #2E7D89;
+    --teal-light: #E4F0F1;
+    --amber: #C9974C;
+    --amber-light: #FBF1E1;
+    --bg: #F3F5F7;
+    --panel: #FFFFFF;
+    --border: #DDE3E7;
+    --text: #1F2937;
+    --text-mute: #62727C;
+    --red: #B3462C;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0;
+    font-family:'IBM Plex Sans', system-ui, sans-serif;
+    background:var(--bg);
+    color:var(--text);
+    font-size:14px;
+  }
+  .mono{font-family:'IBM Plex Mono', monospace;}
+
+  /* Top bar */
+  .topbar{
+    background:var(--navy);
+    color:#fff;
+    display:flex;
+    align-items:center;
+    padding:0 20px;
+    height:48px;
+    font-size:13px;
+    letter-spacing:0.02em;
+  }
+  .topbar .brand{
+    font-weight:700;
+    font-size:15px;
+    letter-spacing:0.03em;
+    margin-right:28px;
+  }
+  .topbar .brand span{color:var(--amber);}
+  .topbar nav{display:flex;gap:22px;}
+  .topbar nav a{color:#C7D6DC;text-decoration:none;padding:14px 0;border-bottom:2px solid transparent;cursor:default;}
+  .topbar nav a.active{color:#fff;border-bottom-color:var(--amber);}
+  .topbar .userbox{margin-left:auto;color:#C7D6DC;font-size:12px;}
+
+  /* Layout */
+  .layout{display:flex;height:calc(100vh - 48px);}
+  .sidebar{
+    width:230px;
+    background:var(--navy-2);
+    color:#DCE8EC;
+    padding:16px 0;
+    overflow-y:auto;
+    flex-shrink:0;
+  }
+  .sidebar h4{
+    font-size:10px;
+    text-transform:uppercase;
+    letter-spacing:0.08em;
+    color:#8FA9B3;
+    padding:6px 18px;
+    margin:14px 0 4px;
+  }
+  .sidebar .item{
+    padding:9px 18px;
+    cursor:pointer;
+    font-size:13px;
+    border-left:3px solid transparent;
+  }
+  .sidebar .item:hover{background:rgba(255,255,255,0.06);}
+  .sidebar .item.active{
+    background:rgba(255,255,255,0.09);
+    border-left-color:var(--amber);
+    color:#fff;
+    font-weight:500;
+  }
+
+  .patientlist{padding:0 12px 12px;}
+  .patientcard{
+    background:rgba(255,255,255,0.05);
+    border:1px solid rgba(255,255,255,0.08);
+    border-radius:6px;
+    padding:10px 12px;
+    margin-bottom:8px;
+    cursor:pointer;
+  }
+  .patientcard.active{
+    background:rgba(255,255,255,0.12);
+    border-color:var(--amber);
+  }
+  .patientcard .pname{font-weight:600;font-size:13px;color:#fff;}
+  .patientcard .pmeta{font-size:11px;color:#9FB4BC;margin-top:2px;}
+
+  main{flex:1;overflow-y:auto;padding:20px 28px 60px;}
+
+  /* Patient banner */
+  .banner{
+    background:var(--panel);
+    border:1px solid var(--border);
+    border-radius:8px;
+    padding:16px 20px;
+    display:flex;
+    align-items:center;
+    gap:24px;
+    margin-bottom:18px;
+  }
+  .banner .avatar{
+    width:44px;height:44px;border-radius:50%;
+    background:var(--teal);color:#fff;
+    display:flex;align-items:center;justify-content:center;
+    font-weight:700;font-size:16px;flex-shrink:0;
+  }
+  .banner .name{font-size:18px;font-weight:700;color:var(--navy);}
+  .banner .sub{font-size:12px;color:var(--text-mute);margin-top:2px;}
+  .banner .flags{margin-left:auto;display:flex;gap:8px;}
+  .flag{
+    background:var(--amber-light);
+    border:1px solid #E9CD98;
+    color:#8A5E17;
+    font-size:11px;
+    font-weight:600;
+    padding:4px 9px;
+    border-radius:4px;
+  }
+  .flag.allergy{background:#FBEAE5;border-color:#E9B7A6;color:var(--red);}
+
+  /* Tabs */
+  .tabs{display:flex;gap:2px;border-bottom:1px solid var(--border);margin-bottom:18px;}
+  .tab{
+    padding:10px 16px;
+    font-size:13px;
+    color:var(--text-mute);
+    cursor:pointer;
+    border-bottom:2px solid transparent;
+  }
+  .tab.active{color:var(--navy);font-weight:600;border-bottom-color:var(--teal);}
+
+  .grid{display:grid;grid-template-columns:1fr 260px;gap:20px;}
+
+  .panel{
+    background:var(--panel);
+    border:1px solid var(--border);
+    border-radius:8px;
+    padding:18px 20px;
+    margin-bottom:16px;
+  }
+  .panel h3{
+    margin:0 0 12px;
+    font-size:13px;
+    text-transform:uppercase;
+    letter-spacing:0.05em;
+    color:var(--navy);
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+  }
+
+  .vital-row{display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px dashed var(--border);font-size:13px;}
+  .vital-row:last-child{border-bottom:none;}
+  .vital-row .val{font-weight:600;color:var(--navy);}
+
+  .btn{
+    background:var(--teal);
+    color:#fff;
+    border:none;
+    padding:9px 16px;
+    border-radius:6px;
+    font-size:13px;
+    font-weight:600;
+    cursor:pointer;
+    font-family:inherit;
+  }
+  .btn:hover{background:#256870;}
+  .btn.secondary{
+    background:#fff;
+    color:var(--teal);
+    border:1px solid var(--teal);
+  }
+  .btn.secondary:hover{background:var(--teal-light);}
+  .btn.ghost{
+    background:transparent;
+    color:var(--text-mute);
+    border:1px solid var(--border);
+  }
+
+  .note-empty{
+    text-align:center;
+    padding:40px 20px;
+    color:var(--text-mute);
+  }
+  .note-empty .icon{font-size:28px;margin-bottom:8px;}
+
+  textarea#noteBody{
+    width:100%;
+    min-height:280px;
+    border:1px solid var(--border);
+    border-radius:6px;
+    padding:14px;
+    font-family:'IBM Plex Mono', monospace;
+    font-size:12.5px;
+    line-height:1.6;
+    color:var(--text);
+    resize:vertical;
+  }
+  textarea#noteBody:focus{outline:2px solid var(--teal);border-color:var(--teal);}
+
+  .note-toolbar{display:flex;gap:8px;margin-top:12px;align-items:center;}
+  .note-status{
+    margin-left:auto;
+    font-size:12px;
+    color:var(--text-mute);
+  }
+  .note-status.signed{color:#2E7D32;font-weight:600;}
+
+  .encounter-meta{
+    display:flex;gap:18px;
+    font-size:12px;color:var(--text-mute);
+    margin-bottom:10px;
+    padding-bottom:10px;
+    border-bottom:1px solid var(--border);
+  }
+  .encounter-meta b{color:var(--navy);}
+
+  .past-note{
+    border:1px solid var(--border);
+    border-radius:6px;
+    padding:12px 14px;
+    margin-bottom:10px;
+    font-size:12.5px;
+  }
+  .past-note .meta{color:var(--text-mute);font-size:11px;margin-bottom:4px;}
+
+  .toast{
+    position:fixed;
+    bottom:24px;
+    right:24px;
+    background:var(--navy);
+    color:#fff;
+    padding:12px 18px;
+    border-radius:6px;
+    font-size:13px;
+    box-shadow:0 6px 18px rgba(0,0,0,0.2);
+    display:none;
+    align-items:center;
+    gap:8px;
+  }
+  .toast.show{display:flex;}
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="brand">TEAMHAP<span>HEALTH</span></div>
+  <nav>
+    <a class="active">Chart Review</a>
+    <a>Notes</a>
+    <a>Orders</a>
+    <a>Results</a>
+    <a>Schedule</a>
+  </nav>
+  <div class="userbox">Dr. C. Wilkins, MD &nbsp;|&nbsp; Internal Medicine</div>
+</div>
+
+<div class="layout">
+  <div class="sidebar">
+    <h4>My Patients — Today</h4>
+    <div class="patientlist">
+      <div class="patientcard active" onclick="selectPatient('dorman', this)">
+        <div class="pname">Dorman, Alice R.</div>
+        <div class="pmeta mono">DOB 03/14/1962 · MRN 7734920</div>
+      </div>
+      <div class="patientcard" onclick="selectPatient('petrakis', this)">
+        <div class="pname">Petrakis, Sam L.</div>
+        <div class="pmeta mono">DOB 09/02/1978 · MRN 7734941</div>
+      </div>
+      <div class="patientcard" onclick="selectPatient('boone', this)">
+        <div class="pname">Boone, Marcus T.</div>
+        <div class="pmeta mono">DOB 11/29/1955 · MRN 7734958</div>
+      </div>
+      <div class="patientcard" onclick="selectPatient('wilkins', this)">
+        <div class="pname">Wilkins, Susan L.</div>
+        <div class="pmeta mono">DOB 05/31/1971 · MRN 7734917</div>
+      </div>
+      <div class="patientcard" onclick="selectPatient('lin', this)">
+        <div class="pname">Lin, Derrick</div>
+        <div class="pmeta mono">DOB 06/03/1973 · MRN FHRT3WR2P75MWJC</div>
+      </div>
+    </div>
+    <h4>Chart Sections</h4>
+    <div class="item">Summary</div>
+    <div class="item active">Encounters &amp; Notes</div>
+    <div class="item">Medications</div>
+    <div class="item">Allergies</div>
+    <div class="item">Problem List</div>
+    <div class="item">Immunizations</div>
+    <div class="item">Labs &amp; Results</div>
+  </div>
+
+  <main>
+    <div class="banner">
+      <div class="avatar" id="bannerAvatar">AD</div>
+      <div>
+        <div class="name" id="bannerName">Dorman, Alice R.</div>
+        <div class="sub mono" id="bannerSub">DOB 03/14/1962 (63y) · F · MRN 7734920 · TeamHap Family Medicine — Wexford</div>
+      </div>
+      <div class="flags" id="bannerFlags">
+        <div class="flag allergy">Allergy: Penicillin</div>
+        <div class="flag">Type 2 Diabetes</div>
+      </div>
+    </div>
+
+    <div class="tabs">
+      <div class="tab">Summary</div>
+      <div class="tab active">Encounters &amp; Notes</div>
+      <div class="tab">Medications</div>
+      <div class="tab">Results</div>
+    </div>
+
+    <div class="grid">
+      <div>
+        <div class="panel">
+          <h3>
+            <span id="encounterTitle">Today's Encounter — Office Visit</span>
+            <span class="mono" id="encounterDateTime" style="font-weight:400;text-transform:none;color:var(--text-mute);font-size:11px;">08/10/2026 · 2:15 PM</span>
+          </h3>
+          <div class="encounter-meta">
+            <div>Type: <b id="encounterType">Established Patient, Follow-up</b></div>
+            <div>Provider: <b>C. Wilkins, MD</b></div>
+            <div>Reason: <b id="encounterReason">Diabetes follow-up</b></div>
+          </div>
+
+          <div id="noteEmptyState" class="note-empty">
+            <div class="icon">📋</div>
+            <div>No note started for this encounter yet.</div>
+            <div style="margin-top:14px;">
+              <button class="btn" onclick="startNote()">+ New Encounter Note</button>
+            </div>
+          </div>
+
+          <div id="noteEditor" style="display:none;">
+            <textarea id="noteBody" placeholder="Paste your finalized note here (e.g. from Physicker / Dragon Copilot)..."></textarea>
+            <div class="note-toolbar">
+              <button class="btn" onclick="signNote()">Sign Note</button>
+              <button class="btn secondary" onclick="pasteSample()">Paste Sample Note</button>
+              <button class="btn ghost" onclick="clearNote()">Discard</button>
+              <span id="noteStatus" class="note-status">Draft — not signed</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="panel">
+          <h3>Previous Notes</h3>
+          <div id="pastNotes">
+            <div class="past-note">
+              <div class="meta mono">07/13/2026 · Office Visit · C. Wilkins, MD · Signed</div>
+              <div><b>A/P:</b> T2DM — A1c improved to 7.1%. Continue metformin 1000mg BID. Recheck A1c in 3 months. Discussed diet/exercise adherence.</div>
+            </div>
+            <div class="past-note">
+              <div class="meta mono">04/02/2026 · Office Visit · C. Wilkins, MD · Signed</div>
+              <div><b>A/P:</b> T2DM, HTN stable. Continue current regimen. Annual labs ordered.</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div>
+        <div class="panel">
+          <h3>Vitals — Today</h3>
+          <div id="vitalsList">
+            <div class="vital-row"><span>Blood Pressure</span><span class="val">132/84</span></div>
+            <div class="vital-row"><span>Heart Rate</span><span class="val">76 bpm</span></div>
+            <div class="vital-row"><span>Temp</span><span class="val">98.4°F</span></div>
+            <div class="vital-row"><span>Weight</span><span class="val">181 lb</span></div>
+            <div class="vital-row"><span>BMI</span><span class="val">28.9</span></div>
+            <div class="vital-row"><span>SpO2</span><span class="val">98%</span></div>
+          </div>
+        </div>
+
+        <div class="panel">
+          <h3>Active Medications</h3>
+          <div id="medsList">
+            <div class="vital-row"><span>Metformin 1000mg</span><span class="val">BID</span></div>
+            <div class="vital-row"><span>Lisinopril 10mg</span><span class="val">QD</span></div>
+            <div class="vital-row"><span>Atorvastatin 20mg</span><span class="val">QHS</span></div>
+          </div>
+        </div>
+
+        <div class="panel">
+          <h3>Problem List</h3>
+          <div id="problemsList">
+            <div class="vital-row"><span>Type 2 Diabetes</span></div>
+            <div class="vital-row"><span>Hypertension</span></div>
+            <div class="vital-row"><span>Hyperlipidemia</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </main>
+</div>
+
+<div class="toast" id="toast">✓ Note signed and filed to chart</div>
+
+<script>
+const PATIENTS = {
+  dorman: {
+    initials: 'AD',
+    name: 'Dorman, Alice R.',
+    sub: 'DOB 03/14/1962 (63y) · F · MRN 7734920 · TeamHap Family Medicine — Wexford',
+    flags: '<div class="flag allergy">Allergy: Penicillin</div><div class="flag">Type 2 Diabetes</div>',
+    encounterTitle: "Today's Encounter — Office Visit",
+    dateTime: '08/10/2026 · 2:15 PM',
+    type: 'Established Patient, Follow-up',
+    reason: 'Diabetes follow-up',
+    vitals: [['Blood Pressure','132/84'],['Heart Rate','76 bpm'],['Temp','98.4°F'],['Weight','181 lb'],['BMI','28.9'],['SpO2','98%']],
+    meds: [['Metformin 1000mg','BID'],['Lisinopril 10mg','QD'],['Atorvastatin 20mg','QHS']],
+    problems: ['Type 2 Diabetes','Hypertension','Hyperlipidemia'],
+    pastNotes: [
+      {meta:'07/13/2026 · Office Visit · C. Wilkins, MD · Signed', body:'<b>A/P:</b> T2DM — A1c improved to 7.1%. Continue metformin 1000mg BID. Recheck A1c in 3 months. Discussed diet/exercise adherence.'},
+      {meta:'04/02/2026 · Office Visit · C. Wilkins, MD · Signed', body:'<b>A/P:</b> T2DM, HTN stable. Continue current regimen. Annual labs ordered.'}
+    ]
+  },
+  petrakis: {
+    initials: 'SP',
+    name: 'Petrakis, Sam L.',
+    sub: 'DOB 09/02/1978 (47y) · M · MRN 7734941 · TeamHap Family Medicine — Wexford',
+    flags: '<div class="flag">Seasonal Allergies</div>',
+    encounterTitle: "Today's Encounter — Office Visit",
+    dateTime: '08/10/2026 · 3:30 PM',
+    type: 'Established Patient, Annual Physical',
+    reason: 'Annual wellness exam',
+    vitals: [['Blood Pressure','118/76'],['Heart Rate','68 bpm'],['Temp','98.2°F'],['Weight','174 lb'],['BMI','24.6'],['SpO2','99%']],
+    meds: [['Loratadine 10mg','PRN']],
+    problems: ['Seasonal Allergic Rhinitis'],
+    pastNotes: [
+      {meta:'08/11/2025 · Office Visit · C. Wilkins, MD · Signed', body:'<b>A/P:</b> Annual physical unremarkable. Labs ordered, routine screening up to date.'}
+    ]
+  },
+  boone: {
+    initials: 'MB',
+    name: 'Boone, Marcus T.',
+    sub: 'DOB 11/29/1955 (70y) · M · MRN 7734958 · TeamHap Family Medicine — Wexford',
+    flags: '<div class="flag">Hypertension</div>',
+    encounterTitle: "Today's Encounter — Office Visit",
+    dateTime: '08/10/2026 · 4:00 PM',
+    type: 'Established Patient, Follow-up',
+    reason: 'Hypertension follow-up',
+    vitals: [['Blood Pressure','142/88'],['Heart Rate','72 bpm'],['Temp','98.6°F'],['Weight','196 lb'],['BMI','27.4'],['SpO2','97%']],
+    meds: [['Amlodipine 5mg','QD'],['Hydrochlorothiazide 25mg','QD']],
+    problems: ['Hypertension','Osteoarthritis'],
+    pastNotes: [
+      {meta:'05/15/2026 · Office Visit · C. Wilkins, MD · Signed', body:'<b>A/P:</b> HTN slightly elevated, increased amlodipine to 5mg. Recheck BP in 4 weeks.'}
+    ]
+  },
+  wilkins: {
+    initials: 'SW',
+    name: 'Wilkins, Susan L.',
+    sub: 'DOB 05/31/1971 (54y) · F · MRN 7734917 · TeamHap Family Medicine — Wexford',
+    flags: '<div class="flag">No Known Allergies</div>',
+    encounterTitle: "Today's Encounter — Office Visit",
+    dateTime: '03/10/2026 · 1:00 PM',
+    type: 'Established Patient, Acute Visit',
+    reason: 'Left knee pain',
+    vitals: [['Blood Pressure','122/78'],['Heart Rate','70 bpm'],['Temp','98.3°F'],['Weight','148 lb'],['BMI','24.1'],['SpO2','99%']],
+    meds: [['Ibuprofen 400mg','PRN']],
+    problems: ['Left Knee Pain (new)'],
+    pastNotes: []
+  },
+  lin: {
+    initials: 'DL',
+    name: 'Lin, Derrick',
+    sub: 'DOB 06/03/1973 (53y) · M · MRN FHRT3WR2P75MWJC · TeamHap Family Medicine — Wexford',
+    flags: '<div class="flag">No Known Allergies</div>',
+    encounterTitle: "Today's Encounter — Office Visit",
+    dateTime: '08/10/2026 · 4:45 PM',
+    type: 'Established Patient, Follow-up',
+    reason: 'General follow-up',
+    vitals: [['Blood Pressure','124/80'],['Heart Rate','74 bpm'],['Temp','98.5°F'],['Weight','172 lb'],['BMI','25.3'],['SpO2','99%']],
+    meds: [],
+    problems: [],
+    pastNotes: []
+  }
+};
+
+let currentPatient = 'dorman';
+
+function selectPatient(id, el){
+  currentPatient = id;
+  const p = PATIENTS[id];
+
+  document.querySelectorAll('.patientcard').forEach(c=>c.classList.remove('active'));
+  el.classList.add('active');
+
+  document.getElementById('bannerAvatar').textContent = p.initials;
+  document.getElementById('bannerName').textContent = p.name;
+  document.getElementById('bannerSub').textContent = p.sub;
+  document.getElementById('bannerFlags').innerHTML = p.flags;
+
+  document.getElementById('encounterTitle').textContent = p.encounterTitle;
+  document.getElementById('encounterDateTime').textContent = p.dateTime;
+  document.getElementById('encounterType').textContent = p.type;
+  document.getElementById('encounterReason').textContent = p.reason;
+
+  document.getElementById('vitalsList').innerHTML = p.vitals.map(v =>
+    `<div class="vital-row"><span>${v[0]}</span><span class="val">${v[1]}</span></div>`).join('');
+  document.getElementById('medsList').innerHTML = p.meds.length
+    ? p.meds.map(m => `<div class="vital-row"><span>${m[0]}</span><span class="val">${m[1]}</span></div>`).join('')
+    : '<div class="vital-row"><span style="color:var(--text-mute);">No active medications</span></div>';
+  document.getElementById('problemsList').innerHTML = p.problems.length
+    ? p.problems.map(pr => `<div class="vital-row"><span>${pr}</span></div>`).join('')
+    : '<div class="vital-row"><span style="color:var(--text-mute);">No active problems</span></div>';
+
+  document.getElementById('pastNotes').innerHTML = p.pastNotes.length
+    ? p.pastNotes.map(n => `<div class="past-note"><div class="meta mono">${n.meta}</div><div>${n.body}</div></div>`).join('')
+    : '<div style="color:var(--text-mute);font-size:12.5px;">No previous notes on file.</div>';
+
+  clearNote();
+}
+
+function startNote(){
+  document.getElementById('noteEmptyState').style.display='none';
+  document.getElementById('noteEditor').style.display='block';
+  document.getElementById('noteBody').focus();
+}
+
+function clearNote(){
+  document.getElementById('noteBody').value='';
+  document.getElementById('noteEditor').style.display='none';
+  document.getElementById('noteEmptyState').style.display='block';
+  document.getElementById('noteStatus').textContent='Draft — not signed';
+  document.getElementById('noteStatus').classList.remove('signed');
+}
+
+function signNote(){
+  const body = document.getElementById('noteBody').value.trim();
+  if(!body){
+    alert('Note is empty — paste your note text before signing.');
+    return;
+  }
+  const status = document.getElementById('noteStatus');
+  status.textContent = 'Signed · ' + new Date().toLocaleString();
+  status.classList.add('signed');
+  const toast = document.getElementById('toast');
+  toast.classList.add('show');
+  setTimeout(()=>toast.classList.remove('show'), 3000);
+}
+
+function pasteSample(){
+  document.getElementById('noteBody').value =
+`CHIEF COMPLAINT: Diabetes follow-up
+
+HPI: Patient presents for routine follow-up of Type 2 Diabetes. Reports good adherence to metformin. Home glucose readings averaging 130-150 fasting. Denies polyuria, polydipsia, blurred vision. No hypoglycemic episodes reported.
+
+ASSESSMENT/PLAN:
+1. Type 2 Diabetes Mellitus — well controlled. Continue Metformin 1000mg BID. Order A1c, recheck in 3 months.
+2. Hypertension — stable on current regimen. Continue Lisinopril 10mg daily.
+3. Hyperlipidemia — continue Atorvastatin 20mg QHS. Fasting lipid panel at next visit.
+
+Follow up in 3 months, sooner if symptoms worsen.`;
+}
+</script>
+
+</body>
+</html>
