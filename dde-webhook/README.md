@@ -24,6 +24,31 @@ service ("Dragon standard payload") hasn't been confirmed yet, so
 Copilot's retrieval service sends back). The app's note-display screen
 tries a few common field names and falls back to showing the raw JSON.
 
+## Audio upload: WebSocket, not REST
+
+`submitRecording` streams the finished audio file to Dragon Copilot over
+the **Ambient Audio Streaming WebSocket API** (`src/lib/audioStreamUpload.js`)
+rather than the older REST chunked-upload flow (`audioUpload.js`, removed) —
+switched for faster downstream processing and because Voice-to-Form's
+`outputFormIds` field only exists on the WebSocket API. No new required
+Azure App Settings for this — it reuses the same `AAS_SCOPE`/token
+acquisition as before, and the WebSocket URL defaults sensibly (derived
+from `AAS_BASE_URL`). If connections fail outright, Microsoft's own doc
+shows two different hostnames across its own examples; try overriding
+`AAS_WS_URL` to `wss://streaming.ambient-audio-service.copilot.us.dragon.com/ws`
+(note the `streaming.` subdomain) as the other candidate.
+
+**Voice-to-Form**: `submitRecording` accepts an optional `outputFormIds`
+form field (comma-separated) and passes it straight through to the
+WebSocket's `RecordingOpen.outputFormIds`. The app currently offers a
+handful of Microsoft-provided test IDs (`encounter_note_pi_mdm`,
+`letter_to_patient`, `letter_to_pcp_gp`, `referral_letter_to_clinician`) —
+the real custom form isn't provisioned yet. Not yet handled: the response
+payload shape for a custom-form result isn't documented, so
+`parseDragonNote` (in the app) only knows how to render the standard
+clinical-note shape — a form result falls back to raw JSON until that's
+confirmed and a dedicated parser is written.
+
 ## One-time setup in Azure
 
 1. **Create a Storage Account** (any name, Standard/LRS is fine) — this is
@@ -125,6 +150,13 @@ npm test
 Runs the handler logic against mocked network calls — confirms the
 webhook validation handshake, secret checks, and retrieve-and-store flow
 all behave correctly, without needing real Azure resources.
+`test/audioStreamUpload.test.js` goes a step further for the WebSocket
+upload: it spins up a real local `ws` server implementing the documented
+AAS WebSocket protocol and drives `streamRecording` against it, confirming
+auth headers, the `RecordingOpen`/`DataChunk`/`RecordingClose` message
+sequence, and byte-for-byte audio delivery — though it can only verify
+we're speaking the protocol as documented, not that Dragon Copilot's real
+server agrees with that documentation.
 
 To run the actual Function locally (talking to a local storage emulator
 instead of real Azure Table Storage), install

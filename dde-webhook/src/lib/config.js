@@ -51,6 +51,19 @@ module.exports = {
   aasBaseUrl: () =>
     process.env.AAS_BASE_URL || 'https://ambient-audio-service.copilot.us.dragon.com',
 
+  // WebSocket variant of AAS (real-time streaming) — one documented
+  // endpoint, GET /ws. Derived from aasBaseUrl by default (same host,
+  // wss:// instead of https://). Microsoft's WebSocket API reference shows
+  // two different hostnames across its own examples — this exact host for
+  // the Authorization-header auth method (what dde-webhook uses, being a
+  // server-side Node.js client, not a browser), but a separate
+  // "streaming." subdomain in its browser-oriented Sec-WebSocket-Protocol
+  // examples. If connections fail outright, try overriding this to
+  // wss://streaming.ambient-audio-service.copilot.us.dragon.com/ws instead.
+  aasWsUrl: () =>
+    process.env.AAS_WS_URL ||
+    `${module.exports.aasBaseUrl().replace(/^https/, 'wss').replace(/\/$/, '')}/ws`,
+
   // Partner/customer/product identifiers needed on every ambient-session
   // and audio-upload call.
   dragonPartnerGuid: () => required('DRAGON_PARTNER_GUID'),

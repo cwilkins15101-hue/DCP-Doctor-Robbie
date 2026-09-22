@@ -1,7 +1,7 @@
 // Ambient Session Service — establishes/ends the session that the
-// Ambient Audio Streaming upload (audioUpload.js) references by
+// Ambient Audio Streaming upload (audioStreamUpload.js) references by
 // correlationId. Lives on the Dragon Copilot Partner API host, which is a
-// different host/scope than the AAS audio-upload endpoints.
+// different host/scope than the AAS audio-upload endpoint.
 const config = require('./config');
 const { getDragonApiToken, describeTokenForAllowList } = require('./dragonApiAuth');
 

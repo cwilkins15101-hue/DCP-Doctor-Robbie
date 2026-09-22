@@ -56,7 +56,11 @@ function buildContext(patient) {
 // next, ...) — reusing recordingId 1 looks to Dragon Copilot like
 // re-finalizing the same take rather than a genuinely new one, and silently
 // never triggers a new note/transcript notification.
-async function submitRecording(audioUri, audioName, patient, existingCorrelationId, recordingId = 1) {
+//
+// outputFormIds (Voice-to-Form) requests one or more template forms
+// instead of (or alongside) the standard clinical note — an array of
+// Dragon-assigned form identifiers, e.g. ["encounter_note_pi_mdm"].
+async function submitRecording(audioUri, audioName, patient, existingCorrelationId, recordingId = 1, outputFormIds) {
   const missing = missingConfigKeys();
   if (missing.length > 0) {
     throw new Error(`Dragon Copilot backend isn't configured: missing ${missing.join(', ')}`);
@@ -76,6 +80,9 @@ async function submitRecording(audioUri, audioName, patient, existingCorrelation
   formData.append('correlationId', correlationId);
   formData.append('recordingId', String(recordingId));
   formData.append('externalUserId', EXTERNAL_USER_ID);
+  if (outputFormIds && outputFormIds.length) {
+    formData.append('outputFormIds', outputFormIds.join(','));
+  }
   const context = buildContext(patient);
   if (context) formData.append('context', JSON.stringify(context));
 

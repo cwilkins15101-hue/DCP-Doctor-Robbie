@@ -1,15 +1,18 @@
 // Called by the Doctor Robbie app once a recording is finished. Orchestrates
 // the whole no-popup Dragon Copilot flow: create an ambient session (with
-// patient/encounter context), upload the audio via Ambient Audio Streaming,
-// finalize (triggers Dragon Copilot processing), then end the session.
-// The physician never signs in to Microsoft — this is a pure app-only,
-// server-to-server flow, per the documented externalUserId-based identity
-// model. Results arrive later via the existing webhook + getResult poll.
+// patient/encounter context), stream the audio over the Ambient Audio
+// Streaming WebSocket API (real-time transport, replacing the older REST
+// chunked-upload flow — switched for faster downstream processing and
+// because Voice-to-Form's outputFormIds field only exists on this API),
+// then end the session. The physician never signs in to Microsoft — this
+// is a pure app-only, server-to-server flow, per the documented
+// externalUserId-based identity model. Results arrive later via the
+// existing webhook + getResult poll.
 const { app } = require('@azure/functions');
 const crypto = require('crypto');
 const config = require('../lib/config');
 const ambientSession = require('../lib/ambientSession');
-const audioUpload = require('../lib/audioUpload');
+const audioStreamUpload = require('../lib/audioStreamUpload');
 const { handleCorsPreflight, withCors } = require('../lib/cors');
 
 async function handler(request, context) {
@@ -44,6 +47,13 @@ async function handler(request, context) {
   // second recording on an existing encounter never triggered a new
   // notification. Defaults to 1 for a first/only recording.
   const recordingId = parseInt(form.get('recordingId'), 10) || 1;
+  // Voice-to-Form — requests one or more template forms instead of (or
+  // alongside) the standard clinical note. Sent by the app as a
+  // comma-separated list (e.g. "encounter_note_pi_mdm").
+  const outputFormIdsRaw = form.get('outputFormIds');
+  const outputFormIds = outputFormIdsRaw
+    ? outputFormIdsRaw.split(',').map((s) => s.trim()).filter(Boolean)
+    : undefined;
 
   const contextRaw = form.get('context');
   let sessionData;
@@ -62,7 +72,14 @@ async function handler(request, context) {
 
   try {
     await ambientSession.createAmbientSession({ correlationId, externalUserId, data: sessionData, ehrInstanceId });
-    await audioUpload.uploadRecording({ correlationId, audioBuffer, recordingId, ehrInstanceId, externalUserId });
+    await audioStreamUpload.streamRecording({
+      correlationId,
+      audioBuffer,
+      recordingId,
+      ehrInstanceId,
+      externalUserId,
+      outputFormIds,
+    });
   } catch (err) {
     context.error(`submitRecording failed for correlationId ${correlationId}:`, err);
     return withCors({ status: 502, jsonBody: { error: String(err?.message ?? err) } });

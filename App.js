@@ -236,6 +236,17 @@ export default function App() {
   const [audioUri, setAudioUri] = useState(null);
   const [audioName, setAudioName] = useState(null);
   const [audioSource, setAudioSource] = useState(null); // 'mic' | 'upload' — mic audio auto-submits on stop
+  // Voice-to-Form — null means the standard clinical note (the existing
+  // default); otherwise one of Dragon Copilot's outputFormIds. Test values
+  // only for now; the real form Microsoft is provisioning isn't ready yet.
+  const [selectedFormId, setSelectedFormId] = useState(null);
+  const VOICE_TO_FORM_OPTIONS = [
+    { id: null, label: 'Standard Clinical Note' },
+    { id: 'encounter_note_pi_mdm', label: 'Encounter Note (PI/MDM)' },
+    { id: 'letter_to_patient', label: 'Letter to Patient' },
+    { id: 'letter_to_pcp_gp', label: 'Letter to PCP/GP' },
+    { id: 'referral_letter_to_clinician', label: 'Referral Letter' },
+  ];
 
   // Patient list
   const [patients, setPatients] = useState([]);
@@ -810,7 +821,8 @@ export default function App() {
         name,
         selectedPatient,
         dragonCorrelationId,
-        recordings.length + 1
+        recordings.length + 1,
+        selectedFormId ? [selectedFormId] : undefined
       );
       setDragonCorrelationId(correlationId);
       setRecordings((prev) => [
@@ -1211,6 +1223,7 @@ export default function App() {
                         setNoteTab('note');
                         setEditedNoteSections({});
                         setShowAllNoteSections(false);
+                        setSelectedFormId(null);
                         setDuration(0);
                       }}
                     >
@@ -1329,6 +1342,29 @@ export default function App() {
         )}
 
         <>
+            {/* Voice-to-Form — pick what Dragon Copilot should produce from
+                this recording, before starting it. Test outputFormIds only,
+                until Microsoft finishes provisioning the real custom form. */}
+            {!isRecording && !audioUri && (
+              <View style={styles.formPickerBlock}>
+                <Text style={styles.formPickerLabel}>Output</Text>
+                <View style={styles.formPickerRow}>
+                  {VOICE_TO_FORM_OPTIONS.map((opt) => (
+                    <TouchableOpacity
+                      key={opt.label}
+                      style={[styles.formChip, selectedFormId === opt.id && styles.formChipActive]}
+                      onPress={() => setSelectedFormId(opt.id)}
+                      activeOpacity={0.8}
+                    >
+                      <Text style={[styles.formChipText, selectedFormId === opt.id && styles.formChipTextActive]}>
+                        {opt.label}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              </View>
+            )}
+
             {/* Recording area */}
             <View style={styles.recordingArea}>
               {isRecording && (
@@ -1820,6 +1856,20 @@ const styles = StyleSheet.create({
     shadowColor: C.epicRedDark, shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.3, shadowRadius: 4, elevation: 3,
   },
   epicChartButtonText: { color: C.white, fontSize: 13, fontWeight: '700', letterSpacing: 0.2 },
+
+  formPickerBlock: { width: '100%', marginBottom: 20 },
+  formPickerLabel: {
+    fontSize: 11, fontWeight: '700', color: C.textLight, textTransform: 'uppercase',
+    letterSpacing: 0.5, marginBottom: 8,
+  },
+  formPickerRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  formChip: {
+    borderWidth: 1, borderColor: C.blueBorder, backgroundColor: C.white,
+    borderRadius: 16, paddingVertical: 7, paddingHorizontal: 14,
+  },
+  formChipActive: { backgroundColor: C.blue, borderColor: C.blue },
+  formChipText: { fontSize: 12, fontWeight: '600', color: C.blueMid },
+  formChipTextActive: { color: C.white },
 
   recordingArea: { alignItems: 'center', gap: 20 },
   recordingIndicator: { flexDirection: 'row', alignItems: 'center', gap: 8 },

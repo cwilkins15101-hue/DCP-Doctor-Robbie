@@ -11,7 +11,7 @@ process.env.DRAGON_PARTNER_GUID = 'partner-guid';
 process.env.DRAGON_ENVIRONMENT_ID = 'customer-guid';
 
 const ambientSession = require('../src/lib/ambientSession');
-const audioUpload = require('../src/lib/audioUpload');
+const audioStreamUpload = require('../src/lib/audioStreamUpload');
 
 const recordedCalls = [];
 ambientSession.createAmbientSession = async (args) => {
@@ -22,9 +22,9 @@ ambientSession.endAmbientSession = async (correlationId) => {
   recordedCalls.push({ fn: 'endAmbientSession', correlationId });
   return { message: 'OK' };
 };
-audioUpload.uploadRecording = async (args) => {
-  recordedCalls.push({ fn: 'uploadRecording', args });
-  return { message: 'OK' };
+audioStreamUpload.streamRecording = async (args) => {
+  recordedCalls.push({ fn: 'streamRecording', args });
+  return { dataStored: args.audioBuffer.length };
 };
 
 const { handler } = require('../src/functions/submitRecording');
@@ -89,7 +89,7 @@ test('rejects invalid JSON in the context field', async () => {
   assert.equal(res.status, 400);
 });
 
-test('orchestrates create session -> upload -> end session, and returns the correlationId', async () => {
+test('orchestrates create session -> stream upload -> end session, and returns the correlationId', async () => {
   const res = await handler(
     fakeFormDataRequest({
       headers: { 'x-app-secret': 'test-app-secret' },
@@ -112,11 +112,12 @@ test('orchestrates create session -> upload -> end session, and returns the corr
   assert.equal(recordedCalls[0].args.externalUserId, 'dr-robbie-1');
   assert.deepEqual(recordedCalls[0].args.data, { patientName: 'Jane Smith' });
 
-  assert.equal(recordedCalls[1].fn, 'uploadRecording');
+  assert.equal(recordedCalls[1].fn, 'streamRecording');
   assert.equal(recordedCalls[1].args.correlationId, 'corr-42');
   assert.equal(recordedCalls[1].args.recordingId, 1);
   assert.ok(Buffer.isBuffer(recordedCalls[1].args.audioBuffer));
   assert.equal(recordedCalls[1].args.audioBuffer.length, 4);
+  assert.equal(recordedCalls[1].args.outputFormIds, undefined);
 
   assert.equal(recordedCalls[2].fn, 'endAmbientSession');
   assert.equal(recordedCalls[2].correlationId, 'corr-42');
@@ -132,9 +133,23 @@ test('passes through a distinct recordingId for an additional recording on the s
     noopContext
   );
   assert.equal(res.status, 200);
-  const uploadCall = recordedCalls.find((c) => c.fn === 'uploadRecording');
+  const uploadCall = recordedCalls.find((c) => c.fn === 'streamRecording');
   assert.equal(uploadCall.args.correlationId, 'corr-42');
   assert.equal(uploadCall.args.recordingId, 2);
+});
+
+test('parses a comma-separated outputFormIds field for Voice-to-Form', async () => {
+  const res = await handler(
+    fakeFormDataRequest({
+      headers: { 'x-app-secret': 'test-app-secret' },
+      fields: { correlationId: 'corr-43', outputFormIds: 'encounter_note_pi_mdm, letter_to_patient' },
+      audioBytes: Buffer.from([1, 2]),
+    }),
+    noopContext
+  );
+  assert.equal(res.status, 200);
+  const uploadCall = recordedCalls.find((c) => c.fn === 'streamRecording');
+  assert.deepEqual(uploadCall.args.outputFormIds, ['encounter_note_pi_mdm', 'letter_to_patient']);
 });
 
 test('generates a correlationId when none is provided', async () => {
@@ -165,8 +180,8 @@ test('still succeeds if endAmbientSession fails (non-fatal)', async () => {
   assert.equal(res.jsonBody.correlationId, 'corr-99');
 });
 
-test('returns 502 if uploadRecording fails', async () => {
-  audioUpload.uploadRecording = async () => {
+test('returns 502 if streamRecording fails', async () => {
+  audioStreamUpload.streamRecording = async () => {
     throw new Error('upload failed');
   };
   const res = await handler(

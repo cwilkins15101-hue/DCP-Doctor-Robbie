@@ -1,0 +1,145 @@
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const { WebSocketServer } = require('ws');
+
+process.env.WEBHOOK_SHARED_SECRET = 'test-webhook-secret';
+process.env.APP_SHARED_SECRET = 'test-app-secret';
+process.env.ENTRA_TENANT_ID = 'tenant';
+process.env.ENTRA_CLIENT_ID = 'client';
+process.env.ENTRA_CLIENT_SECRET = 'secret';
+process.env.AzureWebJobsStorage = 'UseDevelopmentStorage=true';
+process.env.DRAGON_PARTNER_GUID = 'partner-guid';
+process.env.DRAGON_ENVIRONMENT_ID = 'customer-guid';
+
+const dragonApiAuth = require('../src/lib/dragonApiAuth');
+dragonApiAuth.getAasToken = async () => 'fake-aas-token';
+
+const {
+  streamRecording,
+  buildTextMessage,
+  parseTextMessage,
+  buildDataChunkFrame,
+  CHUNK_SIZE_BYTES,
+} = require('../src/lib/audioStreamUpload');
+
+// ---- Pure message-format helpers ----
+
+test('buildTextMessage produces the documented header block above the JSON body', () => {
+  const msg = buildTextMessage('RecordingOpen', { recordingId: 'r1' });
+  const [headerBlock, jsonPart] = msg.split('\r\n\r\n');
+  assert.match(headerBlock, /^Path=RecordingOpen\r\nX-MS-Request-Id=[0-9a-f-]{36}\r\nX-Timestamp=\d{4}-\d{2}-\d{2}T/);
+  assert.deepEqual(JSON.parse(jsonPart), { recordingId: 'r1' });
+});
+
+test('parseTextMessage strips a header block when present', () => {
+  const msg = buildTextMessage('RecordingClose', { recordingId: 'r1', recordingLengthSeconds: 5 });
+  assert.deepEqual(parseTextMessage(msg), { recordingId: 'r1', recordingLengthSeconds: 5 });
+});
+
+test('parseTextMessage handles plain JSON with no header block (server responses)', () => {
+  assert.deepEqual(parseTextMessage('{"dataStored":{"dataStored":32768}}'), {
+    dataStored: { dataStored: 32768 },
+  });
+});
+
+test('buildDataChunkFrame base64-encodes the audio bytes inside a JSON payload', () => {
+  const buf = Buffer.from([1, 2, 3, 4]);
+  const frame = buildDataChunkFrame(128, buf);
+  const parsed = JSON.parse(frame.toString('utf8'));
+  assert.equal(parsed.DataStart, 128);
+  assert.equal(Buffer.from(parsed.Data, 'base64').compare(buf), 0);
+});
+
+// ---- Full protocol, against a real local WebSocket server ----
+
+function startFakeAasServer() {
+  const wss = new WebSocketServer({ port: 0 });
+  const state = { upgradeHeaders: null, recordingOpenBody: null, dataChunks: [], recordingCloseBody: null };
+
+  wss.on('connection', (ws, req) => {
+    state.upgradeHeaders = req.headers;
+    let bytesStored = 0;
+
+    ws.on('message', (data, isBinary) => {
+      if (isBinary) {
+        const chunk = JSON.parse(data.toString('utf8'));
+        state.dataChunks.push(chunk);
+        bytesStored += Buffer.from(chunk.Data, 'base64').length;
+        if (state.dataChunks.length % 1 === 0) {
+          ws.send(JSON.stringify({ dataStored: { dataStored: bytesStored } }));
+        }
+        return;
+      }
+      const parsed = parseTextMessage(data.toString('utf8'));
+      if (data.toString('utf8').startsWith('Path=RecordingOpen')) {
+        state.recordingOpenBody = parsed;
+      } else if (data.toString('utf8').startsWith('Path=RecordingClose')) {
+        state.recordingCloseBody = parsed;
+        ws.send(JSON.stringify({ recordingCloses: { dataStored: bytesStored } }));
+        ws.close(1000);
+      }
+    });
+  });
+
+  return { wss, state, port: () => wss.address().port };
+}
+
+test('streamRecording sends the right auth headers, RecordingOpen body, and full audio, then resolves', async () => {
+  const { wss, state, port } = startFakeAasServer();
+  process.env.AAS_WS_URL = `ws://127.0.0.1:${port()}/ws`;
+
+  const audioBuffer = Buffer.alloc(CHUNK_SIZE_BYTES + 100, 7); // spans two chunks
+
+  const result = await streamRecording({
+    correlationId: 'corr-1',
+    audioBuffer,
+    recordingId: 1,
+    externalUserId: 'user-1',
+    outputFormIds: ['encounter_note_pi_mdm'],
+  });
+
+  assert.ok(result);
+
+  // Auth headers on the upgrade request
+  assert.equal(state.upgradeHeaders.authorization, 'Bearer fake-aas-token');
+  assert.equal(state.upgradeHeaders['customer-id'], 'customer-guid');
+  assert.equal(state.upgradeHeaders['external-user-id'], 'user-1');
+  assert.equal(state.upgradeHeaders['product-id'], '4f939ade-287a-416d-8484-1e64013039dd');
+
+  // RecordingOpen body
+  assert.equal(state.recordingOpenBody.ambientSessionData.correlationId, 'corr-1');
+  assert.equal(state.recordingOpenBody.ambientSessionData.partnerId, 'partner-guid');
+  assert.equal(state.recordingOpenBody.ambientSessionData.customerId, 'customer-guid');
+  assert.deepEqual(state.recordingOpenBody.actions, ['generate-draft']);
+  assert.deepEqual(state.recordingOpenBody.outputFormIds, ['encounter_note_pi_mdm']);
+
+  // Every byte of the recording arrived, in order, with correct offsets
+  const totalBytes = state.dataChunks.reduce((sum, c) => sum + Buffer.from(c.Data, 'base64').length, 0);
+  assert.equal(totalBytes, audioBuffer.length);
+  assert.equal(state.dataChunks[0].DataStart, 0);
+  assert.equal(state.dataChunks[1].DataStart, CHUNK_SIZE_BYTES);
+
+  // RecordingClose body
+  assert.equal(state.recordingCloseBody.recordingId, state.recordingOpenBody.recordingId);
+
+  wss.close();
+  delete process.env.AAS_WS_URL;
+});
+
+test('streamRecording rejects if the server closes with a non-1000 code (RecordingOpen validation failure)', async () => {
+  const wss = new WebSocketServer({ port: 0 });
+  wss.on('connection', (ws) => {
+    // Per the docs: an invalid RecordingOpen gets no message at all, just
+    // a close — simulate that here.
+    ws.close(1007, 'invalid payload');
+  });
+  process.env.AAS_WS_URL = `ws://127.0.0.1:${wss.address().port}/ws`;
+
+  await assert.rejects(
+    () => streamRecording({ correlationId: 'corr-2', audioBuffer: Buffer.from([1, 2, 3]) }),
+    /closed unexpectedly \(code 1007\)/
+  );
+
+  wss.close();
+  delete process.env.AAS_WS_URL;
+});
