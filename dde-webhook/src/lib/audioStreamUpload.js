@@ -116,7 +116,15 @@ async function streamRecording({
       settled = true;
       clearTimeout(openTimer);
       clearTimeout(closeTimer);
-      ws.removeAllListeners();
+      // Deliberately NOT calling ws.removeAllListeners() here — it used to,
+      // but that strips the 'error' listener below too, and ws.terminate()
+      // can itself emit 'error' asynchronously (e.g. "WebSocket was closed
+      // before the connection was established") on a later tick, after this
+      // function has already returned. With no listener left to catch it,
+      // that crashed the whole Node worker process (confirmed live: Azure
+      // Function App logs showed "Worker uncaught exception", killing every
+      // in-flight request, not just this one). fail()/succeed() both no-op
+      // via the settled check, so leftover listeners firing again is safe.
       try {
         ws.terminate();
       } catch {

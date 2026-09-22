@@ -1,5 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const http = require('node:http');
 const { WebSocketServer } = require('ws');
 
 process.env.WEBHOOK_SHARED_SECRET = 'test-webhook-secret';
@@ -141,5 +142,29 @@ test('streamRecording rejects if the server closes with a non-1000 code (Recordi
   );
 
   wss.close();
+  delete process.env.AAS_WS_URL;
+});
+
+// Regression test for a real crash seen live: the server rejecting the
+// WebSocket upgrade outright (plain HTTP response, never reaching 101
+// Switching Protocols) used to crash the whole Node worker process —
+// ws.terminate() inside fail() emitted an 'error' event asynchronously,
+// after fail() had already stripped all listeners (including the 'error'
+// one) via ws.removeAllListeners(). Confirms streamRecording now rejects
+// cleanly instead of taking down the process.
+test('streamRecording rejects (without crashing) when the server refuses the WebSocket upgrade over plain HTTP', async () => {
+  const server = http.createServer((req, res) => {
+    res.writeHead(401, { 'Content-Type': 'text/plain' });
+    res.end('Unauthorized');
+  });
+  await new Promise((resolve) => server.listen(0, resolve));
+  process.env.AAS_WS_URL = `ws://127.0.0.1:${server.address().port}/ws`;
+
+  await assert.rejects(
+    () => streamRecording({ correlationId: 'corr-3', audioBuffer: Buffer.from([1, 2, 3]) }),
+    /AAS WebSocket upgrade rejected \(401\): Unauthorized/
+  );
+
+  server.close();
   delete process.env.AAS_WS_URL;
 });
