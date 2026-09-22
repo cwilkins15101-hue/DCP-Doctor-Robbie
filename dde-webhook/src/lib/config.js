@@ -60,9 +60,19 @@ module.exports = {
   // "streaming." subdomain in its browser-oriented Sec-WebSocket-Protocol
   // examples. If connections fail outright, try overriding this to
   // wss://streaming.ambient-audio-service.copilot.us.dragon.com/ws instead.
+  //
+  // Includes ?api-version=... — confirmed live that omitting it gets a
+  // plain 400 Bad Request at the handshake itself (before the WebSocket
+  // API's own documented 401/403 validation even runs), which looks like
+  // a routing/gateway-level rejection for a missing required parameter.
+  // The WebSocket doc's own URL examples never show this param, but the
+  // REST AAS endpoints (same "AAS 2.0" API family) all require it, so
+  // this is a reasonable next thing to try — same version string as
+  // those. Override AAS_API_VERSION if this guess turns out wrong.
+  aasApiVersion: () => process.env.AAS_API_VERSION || '2025-07-15',
   aasWsUrl: () =>
     process.env.AAS_WS_URL ||
-    `${module.exports.aasBaseUrl().replace(/^https/, 'wss').replace(/\/$/, '')}/ws`,
+    `${module.exports.aasBaseUrl().replace(/^https/, 'wss').replace(/\/$/, '')}/ws?api-version=${module.exports.aasApiVersion()}`,
 
   // Partner/customer/product identifiers needed on every ambient-session
   // and audio-upload call.

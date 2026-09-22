@@ -22,6 +22,14 @@ const {
   buildDataChunkFrame,
   CHUNK_SIZE_BYTES,
 } = require('../src/lib/audioStreamUpload');
+const config = require('../src/lib/config');
+
+test('aasWsUrl defaults to the documented host/path with api-version attached', () => {
+  assert.equal(
+    config.aasWsUrl(),
+    'wss://ambient-audio-service.copilot.us.dragon.com/ws?api-version=2025-07-15'
+  );
+});
 
 // ---- Pure message-format helpers ----
 

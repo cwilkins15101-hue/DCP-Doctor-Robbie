@@ -33,9 +33,15 @@ switched for faster downstream processing and because Voice-to-Form's
 `outputFormIds` field only exists on the WebSocket API. No new required
 Azure App Settings for this — it reuses the same `AAS_SCOPE`/token
 acquisition as before, and the WebSocket URL defaults sensibly (derived
-from `AAS_BASE_URL`). If connections fail outright, Microsoft's own doc
-shows two different hostnames across its own examples; try overriding
-`AAS_WS_URL` to `wss://streaming.ambient-audio-service.copilot.us.dragon.com/ws`
+from `AAS_BASE_URL`, with `?api-version=2025-07-15` attached — confirmed
+live that omitting it gets a plain 400 at the handshake itself, before the
+API's own documented 401/403 checks even run; the WebSocket doc's own
+examples never show this param, but the REST AAS endpoints — same "AAS
+2.0" family — all require it). Override `AAS_API_VERSION` if that guess
+turns out wrong. If connections fail outright rather than getting a 400,
+Microsoft's own doc shows two different hostnames across its own
+examples; try overriding `AAS_WS_URL` to
+`wss://streaming.ambient-audio-service.copilot.us.dragon.com/ws?api-version=2025-07-15`
 (note the `streaming.` subdomain) as the other candidate.
 
 **Voice-to-Form**: `submitRecording` accepts an optional `outputFormIds`
