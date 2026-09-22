@@ -152,7 +152,18 @@ async function streamRecording({
         body += chunk;
       });
       res.on('end', () => {
-        fail(new Error(`AAS WebSocket upgrade rejected (${res.statusCode}): ${body}`));
+        // The 400 seen live so far has come back with an empty body, giving
+        // no clue why. Response headers sometimes carry a gateway's own
+        // error code/reason even when the body doesn't, so surface those
+        // too rather than guessing further blind.
+        const headerText = Object.entries(res.headers || {})
+          .map(([key, value]) => `${key}: ${value}`)
+          .join('; ');
+        fail(
+          new Error(
+            `AAS WebSocket upgrade rejected (${res.statusCode}${res.statusMessage ? ' ' + res.statusMessage : ''}): ${body || '(empty body)'}${headerText ? ` [response headers: ${headerText}]` : ''}`
+          )
+        );
       });
     });
 

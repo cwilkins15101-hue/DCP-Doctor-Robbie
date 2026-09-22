@@ -170,7 +170,29 @@ test('streamRecording rejects (without crashing) when the server refuses the Web
 
   await assert.rejects(
     () => streamRecording({ correlationId: 'corr-3', audioBuffer: Buffer.from([1, 2, 3]) }),
-    /AAS WebSocket upgrade rejected \(401\): Unauthorized/
+    /AAS WebSocket upgrade rejected \(401[^)]*\): Unauthorized/
+  );
+
+  server.close();
+  delete process.env.AAS_WS_URL;
+});
+
+// Regression test for a live failure with an EMPTY response body (a plain
+// 400 at the handshake, no explanation) — the error message needs to fall
+// back to something other than a blank string, and surface any response
+// headers the server did send, since those are the only other place a
+// gateway might explain itself.
+test('streamRecording surfaces response headers when the upgrade is rejected with an empty body', async () => {
+  const server = http.createServer((req, res) => {
+    res.writeHead(400, { 'Content-Type': 'text/plain', 'x-ms-error-code': 'BadRequest' });
+    res.end();
+  });
+  await new Promise((resolve) => server.listen(0, resolve));
+  process.env.AAS_WS_URL = `ws://127.0.0.1:${server.address().port}/ws`;
+
+  await assert.rejects(
+    () => streamRecording({ correlationId: 'corr-4', audioBuffer: Buffer.from([1, 2, 3]) }),
+    /AAS WebSocket upgrade rejected \(400[^)]*\): \(empty body\) \[response headers:.*x-ms-error-code: BadRequest/
   );
 
   server.close();
