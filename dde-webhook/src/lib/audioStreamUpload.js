@@ -96,6 +96,18 @@ async function streamRecording({
 }) {
   const token = await getAasToken();
   const customerId = config.dragonEnvironmentId();
+  // The WebSocket's own recordingId (RecordingOpen/RecordingClose) is a
+  // separate value from the recordingId *parameter* above (which is just
+  // this call's 1-based sequence number within the encounter, used for
+  // logging/tracking). Confirmed live (2026-09-23): Dragon Copilot rejected
+  // a non-GUID correlationId with "Failed to convert request to
+  // RecordingOpenRequest" — after fixing correlationId to a real GUID, the
+  // identical error persisted, pointing at this field, the only other
+  // Microsoft-ID-shaped value still built as a hand-rolled, non-GUID string
+  // (`${correlationId}-${recordingId}`). The doc's field table just says
+  // "string" for this one (no explicit "(GUID)" note, unlike correlationId),
+  // but the evidence says it's still Guid-typed server-side.
+  const wsRecordingId = crypto.randomUUID();
 
   const headers = {
     Authorization: `Bearer ${token}`,
@@ -171,7 +183,7 @@ async function streamRecording({
       clearTimeout(openTimer);
       try {
         const recordingOpenBody = {
-          recordingId: correlationId + '-' + recordingId,
+          recordingId: wsRecordingId,
           ambientSessionData: {
             productId: config.dragonProductId(),
             partnerId: config.dragonPartnerGuid(),
@@ -204,7 +216,7 @@ async function streamRecording({
 
         ws.send(
           buildTextMessage('RecordingClose', {
-            recordingId: correlationId + '-' + recordingId,
+            recordingId: wsRecordingId,
             recordingLengthSeconds: 0,
             reason: 'ui',
           })
