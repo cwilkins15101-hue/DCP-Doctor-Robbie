@@ -13,7 +13,7 @@
 const crypto = require('crypto');
 const WebSocket = require('ws');
 const config = require('./config');
-const { getAasToken } = require('./dragonApiAuth');
+const { getAasToken, describeTokenForAllowList } = require('./dragonApiAuth');
 
 // No documented max/recommended size for this endpoint — kept the same as
 // the REST implementation's chunk size for consistency, adjustable here if
@@ -111,6 +111,14 @@ async function streamRecording({
   log = console.log,
 }) {
   const token = await getAasToken();
+  // TEMPORARY — Dragon Copilot's own support team reported an
+  // authentication error "between our backend systems" while investigating
+  // the WebSocket hang (2026-09-23) and asked for this token's decoded
+  // claims. Only safe, non-secret identity claims (issuer, audience, app
+  // id, tenant) are logged here via the existing describeTokenForAllowList
+  // helper — never the raw signed token itself, which is a live credential
+  // and must never be logged or shared. Safe to remove once resolved.
+  log(`[audioStreamUpload] AAS token claims for Dragon Copilot support: ${describeTokenForAllowList(token)}`);
   const customerId = config.dragonEnvironmentId();
   // The WebSocket's own recordingId (RecordingOpen/RecordingClose) is a
   // separate value from the recordingId *parameter* above (which is just
