@@ -184,6 +184,17 @@ async function streamRecording({
       try {
         const recordingOpenBody = {
           recordingId: wsRecordingId,
+          // The app records m4a/AAC, not one of the other documented
+          // dataFormat options (raw PCM, Ogg Opus, WebM Opus) — those are
+          // specific codecs the server presumably tries to decode, while
+          // "byteStream" is documented as the opaque/unstructured option.
+          // Leaving dataFormat unset (as before) let the server assume its
+          // own default, almost certainly raw PCM, which our actual bytes
+          // are not — a strong candidate for the "Invalid DataChunk
+          // received" rejection seen live. formatSpecifier isn't given an
+          // example value anywhere in the docs we have (and isn't marked
+          // required), so it's left unset rather than guessed.
+          dataFormat: { byteStream: {} },
           ambientSessionData: {
             productId: config.dragonProductId(),
             partnerId: config.dragonPartnerGuid(),
