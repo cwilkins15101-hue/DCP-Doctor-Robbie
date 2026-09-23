@@ -9,7 +9,13 @@
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type, x-app-secret',
+  // Authorization added when submitRecording started forwarding the
+  // physician's delegated Entra token (2026-09-23) — without this, the
+  // browser blocks the actual request at the CORS preflight stage before
+  // it ever reaches the server, silently (a browser-console-only error,
+  // not an HTTP response), since a custom Authorization header on a
+  // cross-origin request must be explicitly allow-listed here.
+  'Access-Control-Allow-Headers': 'Content-Type, x-app-secret, Authorization',
 };
 
 function handleCorsPreflight(request) {

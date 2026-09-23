@@ -12,9 +12,6 @@ process.env.AzureWebJobsStorage = 'UseDevelopmentStorage=true';
 process.env.DRAGON_PARTNER_GUID = 'partner-guid';
 process.env.DRAGON_ENVIRONMENT_ID = 'customer-guid';
 
-const dragonApiAuth = require('../src/lib/dragonApiAuth');
-dragonApiAuth.getAasToken = async () => 'fake-aas-token';
-
 const {
   streamRecording,
   buildTextMessage,
@@ -105,12 +102,13 @@ test('streamRecording sends the right auth headers, RecordingOpen body, and full
     recordingId: 1,
     externalUserId: 'user-1',
     outputFormIds: ['encounter_note_pi_mdm'],
+    entraUserToken: 'fake-entra-user-token',
   });
 
   assert.ok(result);
 
   // Auth headers on the upgrade request
-  assert.equal(state.upgradeHeaders.authorization, 'Bearer fake-aas-token');
+  assert.equal(state.upgradeHeaders.authorization, 'Bearer fake-entra-user-token');
   assert.equal(state.upgradeHeaders['customer-id'], 'customer-guid');
   assert.equal(state.upgradeHeaders['external-user-id'], 'user-1');
   assert.equal(state.upgradeHeaders['product-id'], '4f939ade-287a-416d-8484-1e64013039dd');
@@ -145,7 +143,12 @@ test('streamRecording rejects if the server closes with a non-1000 code (Recordi
   process.env.AAS_WS_URL = `ws://127.0.0.1:${wss.address().port}/ws`;
 
   await assert.rejects(
-    () => streamRecording({ correlationId: 'corr-2', audioBuffer: Buffer.from([1, 2, 3]) }),
+    () =>
+      streamRecording({
+        correlationId: 'corr-2',
+        audioBuffer: Buffer.from([1, 2, 3]),
+        entraUserToken: 'fake-entra-user-token',
+      }),
     /closed unexpectedly \(code 1007\)/
   );
 
@@ -169,7 +172,12 @@ test('streamRecording rejects (without crashing) when the server refuses the Web
   process.env.AAS_WS_URL = `ws://127.0.0.1:${server.address().port}/ws`;
 
   await assert.rejects(
-    () => streamRecording({ correlationId: 'corr-3', audioBuffer: Buffer.from([1, 2, 3]) }),
+    () =>
+      streamRecording({
+        correlationId: 'corr-3',
+        audioBuffer: Buffer.from([1, 2, 3]),
+        entraUserToken: 'fake-entra-user-token',
+      }),
     /AAS WebSocket upgrade rejected \(401[^)]*\): Unauthorized/
   );
 
@@ -191,10 +199,30 @@ test('streamRecording surfaces response headers when the upgrade is rejected wit
   process.env.AAS_WS_URL = `ws://127.0.0.1:${server.address().port}/ws`;
 
   await assert.rejects(
-    () => streamRecording({ correlationId: 'corr-4', audioBuffer: Buffer.from([1, 2, 3]) }),
+    () =>
+      streamRecording({
+        correlationId: 'corr-4',
+        audioBuffer: Buffer.from([1, 2, 3]),
+        entraUserToken: 'fake-entra-user-token',
+      }),
     /AAS WebSocket upgrade rejected \(400[^)]*\): \(empty body\) \[response headers:.*x-ms-error-code: BadRequest/
   );
 
   server.close();
   delete process.env.AAS_WS_URL;
+});
+
+// Regression test for the fix that switched this from an app-only token
+// (getAasToken(), removed) to the physician's own delegated Entra token,
+// forwarded from the app -- confirmed needed live (2026-09-23) by Dragon
+// Copilot's own support team after every earlier attempt hung with total
+// silence despite a fully protocol-correct request. Rejecting immediately
+// (rather than attempting a doomed connection) turns a 60-second silent
+// hang into an instant, actionable error if this is ever accidentally
+// omitted again.
+test('streamRecording rejects immediately if entraUserToken is missing', async () => {
+  await assert.rejects(
+    () => streamRecording({ correlationId: 'corr-5', audioBuffer: Buffer.from([1, 2, 3]) }),
+    /requires entraUserToken/
+  );
 });

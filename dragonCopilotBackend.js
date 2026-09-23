@@ -84,6 +84,16 @@ async function submitRecording(audioUri, audioName, patient, existingCorrelation
     throw new Error(`Dragon Copilot backend isn't configured: missing ${missing.join(', ')}`);
   }
 
+  // Dragon Copilot's support team confirmed live (2026-09-23) that the AAS
+  // WebSocket endpoint needs a real Entra *user* (delegated) access token,
+  // not the app-only token dde-webhook was minting itself — matching what
+  // Token Launch already required. The physician already signs in via
+  // MsftAuth as step one of using the app (same Entra tenant/app
+  // registration, and the "Connector.Access" scope it requests is the same
+  // AAS resource, just delegated instead of app-only), so this reuses that
+  // existing token rather than prompting a second sign-in just for this.
+  const entraUserToken = await MsftAuth.getAccessToken();
+
   const correlationId = existingCorrelationId || newCorrelationId();
   const formData = new FormData();
 
@@ -107,7 +117,7 @@ async function submitRecording(audioUri, audioName, patient, existingCorrelation
 
   const response = await fetch(`${DDE_BASE_URL.replace(/\/$/, '')}/api/submitRecording`, {
     method: 'POST',
-    headers: { 'x-app-secret': DDE_APP_SECRET },
+    headers: { 'x-app-secret': DDE_APP_SECRET, Authorization: `Bearer ${entraUserToken}` },
     body: formData,
   });
 

@@ -64,6 +64,21 @@ test('rejects requests without the app secret', async () => {
   assert.equal(res.status, 401);
 });
 
+// The AAS WebSocket call needs the physician's own delegated Entra token,
+// forwarded by the app as this request's own Authorization header --
+// confirmed live (2026-09-23) by Dragon Copilot's support team after every
+// earlier attempt (using an app-only token minted server-side) hung with
+// total silence. Missing it should fail fast here rather than proceed into
+// a doomed streamRecording() call.
+test('rejects requests without the Authorization header, even with a valid app secret', async () => {
+  const res = await handler(
+    fakeFormDataRequest({ headers: { 'x-app-secret': 'test-app-secret' } }),
+    noopContext
+  );
+  assert.equal(res.status, 401);
+  assert.equal(recordedCalls.length, 0);
+});
+
 test('real responses also carry CORS headers', async () => {
   const res = await handler(fakeFormDataRequest({}), noopContext);
   assert.equal(res.headers['Access-Control-Allow-Origin'], '*');
@@ -71,7 +86,7 @@ test('real responses also carry CORS headers', async () => {
 
 test('rejects requests with no audio field', async () => {
   const res = await handler(
-    fakeFormDataRequest({ headers: { 'x-app-secret': 'test-app-secret' } }),
+    fakeFormDataRequest({ headers: { 'x-app-secret': 'test-app-secret', authorization: 'Bearer fake-entra-user-token' } }),
     noopContext
   );
   assert.equal(res.status, 400);
@@ -80,7 +95,7 @@ test('rejects requests with no audio field', async () => {
 test('rejects invalid JSON in the context field', async () => {
   const res = await handler(
     fakeFormDataRequest({
-      headers: { 'x-app-secret': 'test-app-secret' },
+      headers: { 'x-app-secret': 'test-app-secret', authorization: 'Bearer fake-entra-user-token' },
       fields: { context: 'not json' },
       audioBytes: Buffer.from([1, 2, 3]),
     }),
@@ -92,7 +107,7 @@ test('rejects invalid JSON in the context field', async () => {
 test('orchestrates create session -> stream upload -> end session, and returns the correlationId', async () => {
   const res = await handler(
     fakeFormDataRequest({
-      headers: { 'x-app-secret': 'test-app-secret' },
+      headers: { 'x-app-secret': 'test-app-secret', authorization: 'Bearer fake-entra-user-token' },
       fields: {
         correlationId: 'corr-42',
         externalUserId: 'dr-robbie-1',
@@ -118,6 +133,7 @@ test('orchestrates create session -> stream upload -> end session, and returns t
   assert.ok(Buffer.isBuffer(recordedCalls[1].args.audioBuffer));
   assert.equal(recordedCalls[1].args.audioBuffer.length, 4);
   assert.equal(recordedCalls[1].args.outputFormIds, undefined);
+  assert.equal(recordedCalls[1].args.entraUserToken, 'fake-entra-user-token');
 
   assert.equal(recordedCalls[2].fn, 'endAmbientSession');
   assert.equal(recordedCalls[2].correlationId, 'corr-42');
@@ -126,7 +142,7 @@ test('orchestrates create session -> stream upload -> end session, and returns t
 test('passes through a distinct recordingId for an additional recording on the same encounter', async () => {
   const res = await handler(
     fakeFormDataRequest({
-      headers: { 'x-app-secret': 'test-app-secret' },
+      headers: { 'x-app-secret': 'test-app-secret', authorization: 'Bearer fake-entra-user-token' },
       fields: { correlationId: 'corr-42', recordingId: '2' },
       audioBytes: Buffer.from([1, 2]),
     }),
@@ -141,7 +157,7 @@ test('passes through a distinct recordingId for an additional recording on the s
 test('parses a comma-separated outputFormIds field for Voice-to-Form', async () => {
   const res = await handler(
     fakeFormDataRequest({
-      headers: { 'x-app-secret': 'test-app-secret' },
+      headers: { 'x-app-secret': 'test-app-secret', authorization: 'Bearer fake-entra-user-token' },
       fields: { correlationId: 'corr-43', outputFormIds: 'encounter_note_pi_mdm, letter_to_patient' },
       audioBytes: Buffer.from([1, 2]),
     }),
@@ -155,7 +171,7 @@ test('parses a comma-separated outputFormIds field for Voice-to-Form', async () 
 test('generates a correlationId when none is provided', async () => {
   const res = await handler(
     fakeFormDataRequest({
-      headers: { 'x-app-secret': 'test-app-secret' },
+      headers: { 'x-app-secret': 'test-app-secret', authorization: 'Bearer fake-entra-user-token' },
       audioBytes: Buffer.from([1]),
     }),
     noopContext
@@ -170,7 +186,7 @@ test('still succeeds if endAmbientSession fails (non-fatal)', async () => {
   };
   const res = await handler(
     fakeFormDataRequest({
-      headers: { 'x-app-secret': 'test-app-secret' },
+      headers: { 'x-app-secret': 'test-app-secret', authorization: 'Bearer fake-entra-user-token' },
       fields: { correlationId: 'corr-99' },
       audioBytes: Buffer.from([1]),
     }),
@@ -186,7 +202,7 @@ test('returns 502 if streamRecording fails', async () => {
   };
   const res = await handler(
     fakeFormDataRequest({
-      headers: { 'x-app-secret': 'test-app-secret' },
+      headers: { 'x-app-secret': 'test-app-secret', authorization: 'Bearer fake-entra-user-token' },
       audioBytes: Buffer.from([1]),
     }),
     noopContext

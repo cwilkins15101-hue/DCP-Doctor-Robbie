@@ -13,7 +13,7 @@
 const crypto = require('crypto');
 const WebSocket = require('ws');
 const config = require('./config');
-const { getAasToken, describeTokenForAllowList } = require('./dragonApiAuth');
+const { describeTokenForAllowList } = require('./dragonApiAuth');
 
 // No documented max/recommended size for this endpoint — kept the same as
 // the REST implementation's chunk size for consistency, adjustable here if
@@ -99,6 +99,16 @@ async function streamRecording({
   ehrInstanceId,
   externalUserId,
   outputFormIds,
+  // The physician's own delegated Entra access token (forwarded from the
+  // app's existing MsftAuth sign-in). Required — Dragon Copilot's support
+  // team confirmed live (2026-09-23) that the AAS WebSocket endpoint needs
+  // a real user token here, not the app-only one this used to mint via
+  // getAasToken(); that mismatch is almost certainly why every earlier
+  // live test hung with total silence after a fully protocol-correct
+  // request (the connection/request looked fine to us, but Dragon
+  // Copilot's own backend was silently never routing a response back for
+  // an identity it couldn't reconcile).
+  entraUserToken,
   // Azure Functions only reliably captures/correlates context.log with a
   // given invocation in the Log stream -- plain console.log turned out NOT
   // to be trustworthy here: a live test (2026-09-23) proved the WebSocket
@@ -110,15 +120,19 @@ async function streamRecording({
   // calls don't need to pass one.
   log = console.log,
 }) {
-  const token = await getAasToken();
-  // TEMPORARY — Dragon Copilot's own support team reported an
-  // authentication error "between our backend systems" while investigating
-  // the WebSocket hang (2026-09-23) and asked for this token's decoded
-  // claims. Only safe, non-secret identity claims (issuer, audience, app
-  // id, tenant) are logged here via the existing describeTokenForAllowList
-  // helper — never the raw signed token itself, which is a live credential
-  // and must never be logged or shared. Safe to remove once resolved.
-  log(`[audioStreamUpload] AAS token claims for Dragon Copilot support: ${describeTokenForAllowList(token)}`);
+  if (!entraUserToken) {
+    throw new Error('streamRecording requires entraUserToken (the AAS WebSocket rejects/ignores an app-only token).');
+  }
+  const token = entraUserToken;
+  // TEMPORARY — logs this (now-switched-to-delegated) token's decoded
+  // claims so a live test can confirm it actually carries "idtyp": "user"
+  // and a "scp" claim (delegated), not "roles" (app-only) — the distinction
+  // Dragon Copilot's support team flagged (2026-09-23) as the real cause of
+  // the WebSocket hang. Only safe, non-secret identity claims are logged
+  // via the existing describeTokenForAllowList helper — never the raw
+  // signed token itself, which is a live credential. Safe to remove once
+  // confirmed working end-to-end.
+  log(`[audioStreamUpload] AAS token claims (should now be delegated/user, not app-only): ${describeTokenForAllowList(token)}`);
   const customerId = config.dragonEnvironmentId();
   // The WebSocket's own recordingId (RecordingOpen/RecordingClose) is a
   // separate value from the recordingId *parameter* above (which is just

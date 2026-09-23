@@ -1,13 +1,22 @@
 // Called by the Doctor Robbie app once a recording is finished. Orchestrates
-// the whole no-popup Dragon Copilot flow: create an ambient session (with
+// the whole Dragon Copilot flow: create an ambient session (with
 // patient/encounter context), stream the audio over the Ambient Audio
 // Streaming WebSocket API (real-time transport, replacing the older REST
-// chunked-upload flow — switched for faster downstream processing and
-// because Voice-to-Form's outputFormIds field only exists on this API),
-// then end the session. The physician never signs in to Microsoft — this
-// is a pure app-only, server-to-server flow, per the documented
-// externalUserId-based identity model. Results arrive later via the
-// existing webhook + getResult poll.
+// chunked-upload flow — switched for faster downstream processing), then
+// end the session. Results arrive later via the existing webhook +
+// getResult poll.
+//
+// The AAS WebSocket call needs a real Entra *user* (delegated) access
+// token, not an app-only one — confirmed live by Dragon Copilot's support
+// team (2026-09-23) after a live submission hung indefinitely with no
+// server response despite a fully protocol-correct request. The app
+// forwards the physician's own already-obtained sign-in token (see
+// msftAuth.js/dragonCopilotBackend.js) as this request's own Authorization
+// header; this function just passes it through to audioStreamUpload rather
+// than dde-webhook minting its own app-only token for that specific call.
+// The REST ambient-sessions calls below (ambientSession.js) are unaffected
+// — a different API/scope, already confirmed working with an app-only
+// token.
 const { app } = require('@azure/functions');
 const crypto = require('crypto');
 const config = require('../lib/config');
@@ -24,6 +33,17 @@ async function handler(request, context) {
   const providedSecret = request.headers.get('x-app-secret');
   if (providedSecret !== config.appSharedSecret()) {
     return withCors({ status: 401, body: 'Unauthorized' });
+  }
+
+  // The physician's own delegated Entra token, forwarded by the app — the
+  // AAS WebSocket call needs this specifically (see header comment above).
+  const authHeader = request.headers.get('authorization') || '';
+  const entraUserToken = authHeader.replace(/^Bearer\s+/i, '') || undefined;
+  if (!entraUserToken) {
+    return withCors({
+      status: 401,
+      body: 'Missing Authorization header (expected the physician\'s Entra sign-in token).',
+    });
   }
 
   let form;
@@ -84,6 +104,7 @@ async function handler(request, context) {
       ehrInstanceId,
       externalUserId,
       outputFormIds,
+      entraUserToken,
       // Must stay bound to `context` — @azure/functions v4's context.log
       // uses real private class fields internally, so passing the bare
       // method reference (as this used to) detaches it from that internal
