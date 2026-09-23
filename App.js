@@ -822,7 +822,8 @@ export default function App() {
         selectedPatient,
         dragonCorrelationId,
         recordings.length + 1,
-        selectedFormId ? [selectedFormId] : undefined
+        selectedFormId ? [selectedFormId] : undefined,
+        duration
       );
       setDragonCorrelationId(correlationId);
       setRecordings((prev) => [

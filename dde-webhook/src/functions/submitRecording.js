@@ -47,6 +47,10 @@ async function handler(request, context) {
   // second recording on an existing encounter never triggered a new
   // notification. Defaults to 1 for a first/only recording.
   const recordingId = parseInt(form.get('recordingId'), 10) || 1;
+  // RecordingClose (AAS WebSocket) documents this as required — used to be
+  // hardcoded to 0 server-side, which is never accurate for a real
+  // recording; the app now measures and sends the real value.
+  const recordingLengthSeconds = parseInt(form.get('recordingLengthSeconds'), 10) || 1;
   // Voice-to-Form — requests one or more template forms instead of (or
   // alongside) the standard clinical note. Sent by the app as a
   // comma-separated list (e.g. "encounter_note_pi_mdm").
@@ -76,6 +80,7 @@ async function handler(request, context) {
       correlationId,
       audioBuffer,
       recordingId,
+      recordingLengthSeconds,
       ehrInstanceId,
       externalUserId,
       outputFormIds,

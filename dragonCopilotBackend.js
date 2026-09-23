@@ -72,7 +72,13 @@ function buildContext(patient) {
 // outputFormIds (Voice-to-Form) requests one or more template forms
 // instead of (or alongside) the standard clinical note — an array of
 // Dragon-assigned form identifiers, e.g. ["encounter_note_pi_mdm"].
-async function submitRecording(audioUri, audioName, patient, existingCorrelationId, recordingId = 1, outputFormIds) {
+//
+// recordingLengthSeconds feeds the AAS WebSocket's RecordingClose message,
+// which documents it as required — omitted here defaults to 1 (never 0,
+// a real live recording always has some length; a picked/uploaded file
+// doesn't have a tracked duration, so 1 is a safe placeholder rather than
+// the flatly-wrong 0 this used to hardcode server-side).
+async function submitRecording(audioUri, audioName, patient, existingCorrelationId, recordingId = 1, outputFormIds, recordingLengthSeconds) {
   const missing = missingConfigKeys();
   if (missing.length > 0) {
     throw new Error(`Dragon Copilot backend isn't configured: missing ${missing.join(', ')}`);
@@ -91,6 +97,7 @@ async function submitRecording(audioUri, audioName, patient, existingCorrelation
 
   formData.append('correlationId', correlationId);
   formData.append('recordingId', String(recordingId));
+  formData.append('recordingLengthSeconds', String(Math.max(1, recordingLengthSeconds || 0)));
   formData.append('externalUserId', EXTERNAL_USER_ID);
   if (outputFormIds && outputFormIds.length) {
     formData.append('outputFormIds', outputFormIds.join(','));

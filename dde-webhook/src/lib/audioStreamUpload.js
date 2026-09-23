@@ -95,6 +95,7 @@ async function streamRecording({
   correlationId,
   audioBuffer,
   recordingId = 1,
+  recordingLengthSeconds = 1,
   ehrInstanceId,
   externalUserId,
   outputFormIds,
@@ -233,7 +234,7 @@ async function streamRecording({
         ws.send(
           buildTextMessage('RecordingClose', {
             recordingId: wsRecordingId,
-            recordingLengthSeconds: 0,
+            recordingLengthSeconds,
             reason: 'ui',
           })
         );
