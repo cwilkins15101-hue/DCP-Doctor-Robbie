@@ -84,7 +84,15 @@ async function handler(request, context) {
       ehrInstanceId,
       externalUserId,
       outputFormIds,
-      log: context.log,
+      // Must stay bound to `context` — @azure/functions v4's context.log
+      // uses real private class fields internally, so passing the bare
+      // method reference (as this used to) detaches it from that internal
+      // state and throws "Cannot read private member from an object whose
+      // class did not declare it" the moment it's called from inside an
+      // async WebSocket event callback, crashing the whole worker process
+      // (confirmed live, 2026-09-23 — a real regression from adding this
+      // logging in the first place).
+      log: context.log.bind(context),
     });
   } catch (err) {
     context.error(`submitRecording failed for correlationId ${correlationId}:`, err);
