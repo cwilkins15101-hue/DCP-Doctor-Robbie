@@ -32,17 +32,24 @@ rather than the older REST chunked-upload flow (`audioUpload.js`, removed) —
 switched for faster downstream processing and because Voice-to-Form's
 `outputFormIds` field only exists on the WebSocket API. No new required
 Azure App Settings for this — it reuses the same `AAS_SCOPE`/token
-acquisition as before, and the WebSocket URL defaults sensibly (derived
-from `AAS_BASE_URL`, with `?api-version=2025-07-15` attached — confirmed
-live that omitting it gets a plain 400 at the handshake itself, before the
-API's own documented 401/403 checks even run; the WebSocket doc's own
-examples never show this param, but the REST AAS endpoints — same "AAS
-2.0" family — all require it). Override `AAS_API_VERSION` if that guess
-turns out wrong. If connections fail outright rather than getting a 400,
-Microsoft's own doc shows two different hostnames across its own
-examples; try overriding `AAS_WS_URL` to
-`wss://streaming.ambient-audio-service.copilot.us.dragon.com/ws?api-version=2025-07-15`
-(note the `streaming.` subdomain) as the other candidate.
+acquisition as before, and the WebSocket URL defaults sensibly:
+
+- **Host**: `wss://streaming.ambient-audio-service.copilot.us.dragon.com/ws`.
+  Microsoft's WebSocket doc shows two different hostnames across its own
+  examples (a plain host and this `streaming.` subdomain). Confirmed live
+  (2026-09-23) that the plain host gets rejected at **Azure Front Door**
+  itself — its 400 response carried Front Door's own session-affinity
+  cookies (`ASLBSA`/`ASLBSACORS`), meaning the request never reached
+  Dragon Copilot's actual service — while the `streaming.` host reaches
+  the real backend (its response carries a `mise-correlation-id`,
+  Microsoft's own auth middleware). Override `AAS_WS_URL` if this ever
+  needs to change.
+- **`?api-version=1`**: omitting it gets a plain 400 at the handshake
+  itself. Confirmed live (2026-09-23) from the 400 response's own
+  `api-supported-versions: 1` header — the WebSocket endpoint uses a
+  plain `1`, not the date-stamped `2025-07-15` the REST AAS endpoints
+  use (a different version scheme on the same API family). Override
+  `AAS_API_VERSION` if this ever changes.
 
 **Voice-to-Form**: `submitRecording` accepts an optional `outputFormIds`
 form field (comma-separated) and passes it straight through to the

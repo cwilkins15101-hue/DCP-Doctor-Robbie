@@ -52,27 +52,33 @@ module.exports = {
     process.env.AAS_BASE_URL || 'https://ambient-audio-service.copilot.us.dragon.com',
 
   // WebSocket variant of AAS (real-time streaming) — one documented
-  // endpoint, GET /ws. Derived from aasBaseUrl by default (same host,
-  // wss:// instead of https://). Microsoft's WebSocket API reference shows
-  // two different hostnames across its own examples — this exact host for
-  // the Authorization-header auth method (what dde-webhook uses, being a
-  // server-side Node.js client, not a browser), but a separate
-  // "streaming." subdomain in its browser-oriented Sec-WebSocket-Protocol
-  // examples. If connections fail outright, try overriding this to
-  // wss://streaming.ambient-audio-service.copilot.us.dragon.com/ws instead.
+  // endpoint, GET /ws. Microsoft's WebSocket API reference shows two
+  // different hostnames across its own examples: the plain aasBaseUrl
+  // host (Authorization-header auth) vs. this "streaming." subdomain
+  // (browser-oriented Sec-WebSocket-Protocol auth). Defaults to the
+  // "streaming." host, confirmed live (2026-09-23): the plain host
+  // rejected the WebSocket upgrade at Azure Front Door itself (its
+  // response carried Front Door's own session-affinity cookies,
+  // ASLBSA/ASLBSACORS, meaning the request never reached Dragon
+  // Copilot's actual service) — the "streaming." host instead reached
+  // the real backend (its 400 response carried a mise-correlation-id,
+  // Microsoft's auth middleware, plus a helpful
+  // api-supported-versions header). Override AAS_WS_URL if this ever
+  // needs to change back.
   //
-  // Includes ?api-version=... — confirmed live that omitting it gets a
-  // plain 400 Bad Request at the handshake itself (before the WebSocket
-  // API's own documented 401/403 validation even runs), which looks like
-  // a routing/gateway-level rejection for a missing required parameter.
-  // The WebSocket doc's own URL examples never show this param, but the
-  // REST AAS endpoints (same "AAS 2.0" API family) all require it, so
-  // this is a reasonable next thing to try — same version string as
-  // those. Override AAS_API_VERSION if this guess turns out wrong.
-  aasApiVersion: () => process.env.AAS_API_VERSION || '2025-07-15',
+  // Includes ?api-version=... — omitting it gets a plain 400 Bad Request
+  // at the handshake itself. Confirmed live (2026-09-23): that 400
+  // response's own headers included `api-supported-versions: 1` —
+  // ASP.NET-style versioning middleware telling us exactly what it
+  // expects. The WebSocket endpoint uses a plain "1", NOT the
+  // date-stamped "2025-07-15" the REST AAS endpoints use (a different
+  // version scheme on the same family of APIs) — this is confirmed from
+  // the server's own response, not guessed. Override AAS_API_VERSION if
+  // this ever changes.
+  aasApiVersion: () => process.env.AAS_API_VERSION || '1',
   aasWsUrl: () =>
     process.env.AAS_WS_URL ||
-    `${module.exports.aasBaseUrl().replace(/^https/, 'wss').replace(/\/$/, '')}/ws?api-version=${module.exports.aasApiVersion()}`,
+    `wss://streaming.${module.exports.aasBaseUrl().replace(/^https:\/\//, '').replace(/\/$/, '')}/ws?api-version=${module.exports.aasApiVersion()}`,
 
   // Partner/customer/product identifiers needed on every ambient-session
   // and audio-upload call.

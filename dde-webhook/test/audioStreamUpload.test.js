@@ -24,10 +24,10 @@ const {
 } = require('../src/lib/audioStreamUpload');
 const config = require('../src/lib/config');
 
-test('aasWsUrl defaults to the documented host/path with api-version attached', () => {
+test('aasWsUrl defaults to the streaming host/path with the confirmed api-version', () => {
   assert.equal(
     config.aasWsUrl(),
-    'wss://ambient-audio-service.copilot.us.dragon.com/ws?api-version=2025-07-15'
+    'wss://streaming.ambient-audio-service.copilot.us.dragon.com/ws?api-version=1'
   );
 });
 
