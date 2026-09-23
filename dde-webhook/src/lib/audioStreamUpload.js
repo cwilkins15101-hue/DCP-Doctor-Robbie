@@ -23,8 +23,13 @@ const CHUNK_SIZE_BYTES = 64 * 1024;
 // How long to wait for the server to accept the WebSocket upgrade, and
 // separately for it to close cleanly after RecordingClose, before giving
 // up — the doc doesn't document either, these are conservative guesses.
+// CLOSE_TIMEOUT_MS was raised from 30s after a live 10-second recording hit
+// it live (2026-09-23) — the first submission to get all the way through
+// RecordingOpen + all DataChunks cleanly, so this may just be one-off
+// latency on the server's first real finalize for a new connection rather
+// than a genuine hang; widened as a safety margin either way.
 const OPEN_TIMEOUT_MS = 15000;
-const CLOSE_TIMEOUT_MS = 30000;
+const CLOSE_TIMEOUT_MS = 60000;
 
 // Simple backpressure guard (per the doc's "Best practices" — don't send
 // audio faster than the server can process). Not sophisticated; just
