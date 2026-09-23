@@ -44,6 +44,14 @@ function describeTokenForAllowList(token) {
     idtyp: claims.idtyp,
     scp: claims.scp,
     roles: claims.roles,
+    // Dragon Copilot's support team separately flagged (2026-09-23) that
+    // the token needs a "sub" claim identifying the subject/user, and
+    // suspects ours is missing it. Not previously checked here — added to
+    // find out for certain rather than assume either way. oid (the Entra
+    // object id) included too since it's another common "who is this"
+    // claim some APIs check instead of/alongside sub.
+    sub: claims.sub,
+    oid: claims.oid,
   });
 }
 
