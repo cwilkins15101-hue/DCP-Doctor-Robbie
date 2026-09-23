@@ -30,10 +30,22 @@ function missingConfigKeys() {
     .map(([key]) => key);
 }
 
-// Doesn't need to be a real UUID — Dragon's API only requires letters,
-// numbers, underscore, hyphen, and pipe, under 128 characters.
+// Must be a real GUID — confirmed live (2026-09-23): Dragon Copilot's AAS
+// WebSocket endpoint (RecordingOpen.ambientSessionData.correlationId, which
+// this value feeds straight into) rejected a non-GUID correlationId with
+// "Failed to convert request to RecordingOpenRequest", matching its own docs,
+// which explicitly label this field "(GUID)" — unlike the REST API's looser
+// "letters/numbers/underscore/hyphen/pipe" rule, which the old
+// doctor-robbie-<timestamp>-<random> format satisfied but a GUID check does
+// not. No crypto.randomUUID() dependency (not reliably available in React
+// Native/Hermes) — plain Math.random()-based UUID v4 is fine here since this
+// only needs to be unique, not cryptographically unguessable.
 function newCorrelationId() {
-  return `doctor-robbie-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    const v = c === 'x' ? r : (r & 0x3) | 0x8;
+    return v.toString(16);
+  });
 }
 
 function buildContext(patient) {
