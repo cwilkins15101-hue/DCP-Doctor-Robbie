@@ -29,8 +29,11 @@ tries a few common field names and falls back to showing the raw JSON.
 `submitRecording` streams the finished audio file to Dragon Copilot over
 the **Ambient Audio Streaming WebSocket API** (`src/lib/audioStreamUpload.js`)
 rather than the older REST chunked-upload flow (`audioUpload.js`, removed) —
-switched for faster downstream processing and because Voice-to-Form's
-`outputFormIds` field only exists on the WebSocket API. No new required
+switched for faster downstream processing. (Voice-to-Form's `outputFormIds`
+was originally thought to be WebSocket-only, but Microsoft confirmed live
+[2026-09-23] that the REST endpoints support it too — worth knowing as a
+fallback if the WebSocket issue below doesn't resolve, though there's no
+need to switch back while REST offers no speed benefit.) No new required
 Azure App Settings for this — it reuses the same `AAS_SCOPE`/token
 acquisition as before, and the WebSocket URL defaults sensibly:
 
