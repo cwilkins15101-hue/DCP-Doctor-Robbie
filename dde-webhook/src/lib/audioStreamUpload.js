@@ -99,6 +99,16 @@ async function streamRecording({
   ehrInstanceId,
   externalUserId,
   outputFormIds,
+  // Azure Functions only reliably captures/correlates context.log with a
+  // given invocation in the Log stream -- plain console.log turned out NOT
+  // to be trustworthy here: a live test (2026-09-23) proved the WebSocket
+  // open/RecordingOpen-sent/DataChunk-finished/RecordingClose-sent steps
+  // all definitely happened (confirmed indirectly -- we got the 60s
+  // close-wait timeout specifically, not the 15s open-wait one, which only
+  // fires if 'open' never happened), yet none of those console.log lines
+  // showed up in the Log stream. Defaults to console.log so tests/manual
+  // calls don't need to pass one.
+  log = console.log,
 }) {
   const token = await getAasToken();
   const customerId = config.dragonEnvironmentId();
@@ -187,7 +197,7 @@ async function streamRecording({
 
     ws.on('open', async () => {
       clearTimeout(openTimer);
-      console.log(`[audioStreamUpload] WebSocket open (correlationId=${correlationId}, recordingId=${wsRecordingId})`);
+      log(`[audioStreamUpload] WebSocket open (correlationId=${correlationId}, recordingId=${wsRecordingId})`);
       try {
         const recordingOpenBody = {
           recordingId: wsRecordingId,
@@ -223,7 +233,7 @@ async function streamRecording({
           ...(outputFormIds && outputFormIds.length ? { outputFormIds } : {}),
         };
         ws.send(buildTextMessage('RecordingOpen', recordingOpenBody));
-        console.log(`[audioStreamUpload] Sent RecordingOpen (${audioBuffer.length} bytes to stream, dataFormat=byteStream)`);
+        log(`[audioStreamUpload] Sent RecordingOpen (${audioBuffer.length} bytes to stream, dataFormat=byteStream)`);
 
         let offset = 0;
         for (; offset < audioBuffer.length; offset += CHUNK_SIZE_BYTES) {
@@ -232,7 +242,7 @@ async function streamRecording({
           const slice = audioBuffer.subarray(offset, Math.min(offset + CHUNK_SIZE_BYTES, audioBuffer.length));
           ws.send(buildDataChunkFrame(offset, slice), { binary: true });
         }
-        console.log(`[audioStreamUpload] Finished sending all DataChunk frames (${audioBuffer.length} bytes total)`);
+        log(`[audioStreamUpload] Finished sending all DataChunk frames (${audioBuffer.length} bytes total)`);
 
         ws.send(
           buildTextMessage('RecordingClose', {
@@ -241,7 +251,7 @@ async function streamRecording({
             reason: 'ui',
           })
         );
-        console.log(`[audioStreamUpload] Sent RecordingClose (recordingLengthSeconds=${recordingLengthSeconds}), waiting for RecordingCloseResponse...`);
+        log(`[audioStreamUpload] Sent RecordingClose (recordingLengthSeconds=${recordingLengthSeconds}), waiting for RecordingCloseResponse...`);
 
         closeTimer = setTimeout(
           () => fail(new Error('Timed out waiting for RecordingCloseResponse from the AAS WebSocket.')),
@@ -259,7 +269,7 @@ async function streamRecording({
       // message that shows up just after our own timeout fires is still
       // visible in the Log stream — that would mean the server did
       // eventually respond, just slower than we waited.
-      console.log(`[audioStreamUpload] Received text message: ${raw.slice(0, 500)}`);
+      log(`[audioStreamUpload] Received text message: ${raw.slice(0, 500)}`);
       if (settled) return;
       const parsed = parseTextMessage(raw);
       if (parsed?.recordingCloses) {
@@ -271,7 +281,7 @@ async function streamRecording({
     });
 
     ws.on('close', (code, reasonBuf) => {
-      console.log(`[audioStreamUpload] WebSocket close event: code=${code}, reason=${reasonBuf?.toString('utf8') || '(none)'}, alreadySettled=${settled}`);
+      log(`[audioStreamUpload] WebSocket close event: code=${code}, reason=${reasonBuf?.toString('utf8') || '(none)'}, alreadySettled=${settled}`);
       if (settled) return;
       // A clean close (1000) that arrives before we saw
       // RecordingCloseResponse still counts as success per the documented

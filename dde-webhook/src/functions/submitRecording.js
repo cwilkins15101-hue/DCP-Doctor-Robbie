@@ -84,6 +84,7 @@ async function handler(request, context) {
       ehrInstanceId,
       externalUserId,
       outputFormIds,
+      log: context.log,
     });
   } catch (err) {
     context.error(`submitRecording failed for correlationId ${correlationId}:`, err);
