@@ -509,6 +509,23 @@ export default function App() {
   // onaudioprocess in some browsers — routed through a silent (gain 0) node
   // so the physician's own voice doesn't play back out loud while recording.
   async function startLiveCaptureWeb() {
+    // Started BEFORE requesting the microphone, deliberately -- this may
+    // need to open a Microsoft sign-in popup internally (MsftAuth.
+    // getAccessToken(), if the cached token has expired), and that only
+    // reliably works while still inside the original click's user-gesture
+    // window. Awaiting getUserMedia() first (a separate, real async gap)
+    // can cause browsers to silently block a popup opened afterward, which
+    // hung indefinitely (2026-09-24 live test: no request ever reached the
+    // Network tab, meaning fetch() itself never got called -- getAccessToken
+    // never resolved). startLiveRecordingStream() itself is synchronous
+    // (returns immediately with push/finish handles); only its internal
+    // token acquisition is async, so kicking it off first costs nothing.
+    const liveSession = DragonCopilotBackend.startLiveRecordingStream(
+      selectedPatient,
+      recordings.length + 1,
+      selectedFormId ? [selectedFormId] : undefined
+    );
+
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
     const AudioContextClass = window.AudioContext || window.webkitAudioContext;
     const audioContext = new AudioContextClass({ sampleRate: 16000 });
@@ -516,12 +533,6 @@ export default function App() {
     const processor = audioContext.createScriptProcessor(4096, 1, 1);
     const silentGain = audioContext.createGain();
     silentGain.gain.value = 0;
-
-    const liveSession = DragonCopilotBackend.startLiveRecordingStream(
-      selectedPatient,
-      recordings.length + 1,
-      selectedFormId ? [selectedFormId] : undefined
-    );
 
     processor.onaudioprocess = (event) => {
       const input = event.inputBuffer.getChannelData(0); // Float32, -1..1
