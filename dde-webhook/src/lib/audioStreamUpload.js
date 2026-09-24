@@ -68,25 +68,25 @@ function buildDataChunkFrame(dataStart, buffer) {
   return Buffer.from(JSON.stringify({ DataStart: dataStart, Data: buffer.toString('base64') }), 'utf8');
 }
 
-// Declares the *actual* recorded format instead of only ever falling back
-// to the generic/opaque byteStream. Checked live (2026-09-23): Expo's
-// HIGH_QUALITY preset records genuine WebM/Opus on web (regardless of the
-// "Recording.m4a" label the app shows), which is one of the doc's
-// specifically-supported codecs — byteStream is documented as the opaque
-// option for audio that doesn't fit pcm/opus/webmOpus, so a real webmOpus
-// recording declared as byteStream may be handled by a more limited code
-// path (accepted at the transport level but not fully processed), which
-// would be consistent with every live test so far: fully accepted, then
-// silence. sampleRateHz: 48000 is an educated default (the common browser
-// microphone-capture default), not confirmed — Expo's web preset doesn't
-// specify a sample rate itself, so this may need adjusting if still wrong.
-// iOS/Android genuinely record AAC/m4a with this preset, which has no
-// specific documented dataFormat option, so byteStream remains correct
-// there.
-function buildDataFormat(audioMimeType) {
-  if (audioMimeType && audioMimeType.includes('webm')) {
-    return { webmOpus: { sampleRateHz: 48000 } };
-  }
+// Tried declaring dataFormat.webmOpus for genuine web/webm recordings
+// (2026-09-23), reasoning that byteStream might be a more limited code path
+// than the documented "real" codecs. Reverted (2026-09-24) after a live
+// test: webmOpus got an immediate, real 1007 "Invalid DataChunk received"
+// -- proof the server DOES actively validate content against the declared
+// format, and that our chunks fail that validation. That's architectural,
+// not a wrong parameter guess: this app records the whole clip first, then
+// slices the finished file into arbitrary fixed-size byte ranges for
+// upload -- pcm/opus/webmOpus look built for genuine live streaming, where
+// each chunk is a freshly-encoded unit as it's produced, not an arbitrary
+// byte range chopped out of an already-complete container file (a random
+// 64KB slice of a finished WebM file isn't itself independently valid
+// WebM). byteStream ("opaque, no structure assumed") is the architecturally
+// correct declaration for how this app actually captures and uploads audio
+// on every platform, web (real webm) and iOS/Android (real AAC/m4a) alike
+// -- confirming this didn't solve the separate, still-open mystery of why
+// even a correctly-byteStream-declared upload gets total silence rather
+// than any response.
+function buildDataFormat() {
   return { byteStream: {} };
 }
 
@@ -248,7 +248,7 @@ async function streamRecording({
       clearTimeout(openTimer);
       log(`[audioStreamUpload] WebSocket open (correlationId=${correlationId}, recordingId=${wsRecordingId})`);
       try {
-        const dataFormat = buildDataFormat(audioMimeType);
+        const dataFormat = buildDataFormat();
         const recordingOpenBody = {
           recordingId: wsRecordingId,
           dataFormat,

@@ -57,13 +57,14 @@ test('buildDataChunkFrame base64-encodes the audio bytes inside a JSON payload',
   assert.equal(Buffer.from(parsed.Data, 'base64').compare(buf), 0);
 });
 
-test('buildDataFormat declares webmOpus for a real WebM recording (Expo web preset)', () => {
-  assert.deepEqual(buildDataFormat('audio/webm'), { webmOpus: { sampleRateHz: 48000 } });
-});
-
-test('buildDataFormat falls back to byteStream for AAC/m4a (iOS/Android) or unknown types', () => {
-  assert.deepEqual(buildDataFormat('audio/m4a'), { byteStream: {} });
-  assert.deepEqual(buildDataFormat(undefined), { byteStream: {} });
+// webmOpus was tried and reverted (2026-09-24) -- a live test showed the
+// server actively validates content against a declared codec, and this
+// app's arbitrary fixed-size chunking of an already-complete recording
+// doesn't produce independently-valid WebM/Opus fragments. byteStream is
+// the correct declaration for how this app captures and uploads audio on
+// every platform.
+test('buildDataFormat always declares byteStream', () => {
+  assert.deepEqual(buildDataFormat(), { byteStream: {} });
 });
 
 // ---- Full protocol, against a real local WebSocket server ----
