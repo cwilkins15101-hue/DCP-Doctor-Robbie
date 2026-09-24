@@ -122,12 +122,16 @@ module.exports = {
   // is included too since Doctor Robbie supports adding multiple
   // recordings to one encounter — it's unconfirmed whether a re-processed
   // note after an added recording arrives under this type or a repeat
-  // encounter_data_ready_complete, so both are accepted. (Other dax event
-  // types exist too — failures, orders, audio — add them here if this
-  // integration needs to react to those as well.)
+  // encounter_data_ready_complete, so both are accepted.
+  // supplemental_encounter_data_ready is Voice-to-Form's actual event type
+  // for a requested custom form (e.g. a referral letter) -- confirmed live
+  // 2026-09-24 from a real webhook delivery (the type wasn't documented
+  // anywhere beforehand and was being silently dropped as unrecognized).
+  // (Other dax event types exist too — failures, orders, audio — add them
+  // here if this integration needs to react to those as well.)
   recognizedEventTypes: () =>
     (process.env.DDE_RECOGNIZED_EVENT_TYPES ||
-      'encounter_data_ready_complete,transcript_ready_complete,encounter_data_updated')
+      'encounter_data_ready_complete,transcript_ready_complete,encounter_data_updated,supplemental_encounter_data_ready')
       .split(',')
       .map((s) => s.trim())
       .filter(Boolean),

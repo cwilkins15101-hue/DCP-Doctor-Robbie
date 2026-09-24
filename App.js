@@ -163,10 +163,16 @@ function parseDragonTranscript(transcriptBody) {
 // under a different event type (e.g. encounter_data_updated) than the
 // original (encounter_data_ready_complete) rather than replacing the same
 // stored entry — so among all matches, take the most recently stored one.
-function findArtifact(artifacts, keyword) {
+// excludeKeyword filters out a type even if it matches keyword — needed
+// because "supplemental_encounter_data_ready" (Voice-to-Form's own event
+// type, confirmed live 2026-09-24) contains "encounter_data" too, so a
+// plain note lookup would otherwise risk picking up a form-output result
+// instead of the actual clinical note.
+function findArtifact(artifacts, keyword, excludeKeyword) {
   if (!artifacts) return null;
   const matches = Object.entries(artifacts)
     .filter(([type]) => type.toLowerCase().includes(keyword))
+    .filter(([type]) => !excludeKeyword || !type.toLowerCase().includes(excludeKeyword))
     .map(([, value]) => value);
   if (matches.length === 0) return null;
   return matches.reduce((latest, current) =>
@@ -331,10 +337,17 @@ export default function App() {
   // notifications (see webhookReceiver.js) — track their readiness
   // separately rather than as one combined status.
   const artifacts = dragonDdeResult?.artifacts ?? null;
-  const noteResult = findArtifact(artifacts, 'encounter_data');
+  const noteResult = findArtifact(artifacts, 'encounter_data', 'supplemental');
   const transcriptResult = findArtifact(artifacts, 'transcript');
+  // Voice-to-Form (a requested output like a referral letter) — a separate
+  // notification from the standard note, event type
+  // supplemental_encounter_data_ready (confirmed live 2026-09-24). Only
+  // present when an "Output" other than the standard clinical note was
+  // requested for this encounter.
+  const formOutputResult = findArtifact(artifacts, 'supplemental');
   const noteReady = !!noteResult;
   const transcriptReady = !!transcriptResult;
+  const formOutputReady = !!formOutputResult;
   // "Current" (drives the status badges/polling) is stricter than "ready"
   // (drives whether there's anything to show at all) — after an additional
   // recording, the tabs keep showing the previous note/transcript rather
@@ -427,7 +440,7 @@ export default function App() {
         const result = await DdeClient.fetchResult(dragonCorrelationId);
         if (!stopped && result) {
           setDragonDdeResult(result);
-          const note = findArtifact(result.artifacts, 'encounter_data');
+          const note = findArtifact(result.artifacts, 'encounter_data', 'supplemental');
           const transcript = findArtifact(result.artifacts, 'transcript');
           const noteCurrent = note && (!lastSubmittedAt || new Date(note.storedAt) >= lastSubmittedAt);
           const transcriptCurrent =
@@ -1277,6 +1290,17 @@ export default function App() {
       return <Text style={styles.dragonBodyText}>The transcript hasn't been delivered yet.</Text>;
     }
 
+    // Voice-to-Form (e.g. a referral letter) — raw JSON only for now, since
+    // the response payload's shape isn't confirmed yet (unlike the note and
+    // transcript, whose shapes were confirmed from real deliveries). Revisit
+    // once a real one has been inspected.
+    function renderFormOutputTab() {
+      if (formOutputResult) {
+        return <Text style={styles.summaryText} selectable>{JSON.stringify(formOutputResult, null, 2)}</Text>;
+      }
+      return <Text style={styles.dragonBodyText}>The requested form output hasn't been delivered yet.</Text>;
+    }
+
     function renderStatusBadge(label, ready) {
       return (
         <View key={label} style={styles.statusItem}>
@@ -1400,9 +1424,24 @@ export default function App() {
                         Transcript
                       </Text>
                     </TouchableOpacity>
+                    {/* Only shown once a requested form output has actually
+                        arrived — most encounters don't request one, and an
+                        always-present empty tab would just be clutter. */}
+                    {formOutputResult && (
+                      <TouchableOpacity
+                        style={[styles.noteTabButton, noteTab === 'formOutput' && styles.noteTabButtonActive]}
+                        onPress={() => setNoteTab('formOutput')}
+                      >
+                        <Text style={[styles.noteTabButtonText, noteTab === 'formOutput' && styles.noteTabButtonTextActive]}>
+                          Form Output
+                        </Text>
+                      </TouchableOpacity>
+                    )}
                   </View>
                   <ScrollView contentContainerStyle={styles.summaryBody}>
-                    {noteTab === 'note' ? renderNoteTab() : renderTranscriptTab()}
+                    {noteTab === 'note' && renderNoteTab()}
+                    {noteTab === 'transcript' && renderTranscriptTab()}
+                    {noteTab === 'formOutput' && renderFormOutputTab()}
                   </ScrollView>
                   <View style={styles.tsFooter}>
                     <TouchableOpacity

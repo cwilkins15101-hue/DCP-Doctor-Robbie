@@ -156,6 +156,31 @@ test('POST with a transcript_ready_complete event is recognized and stored (not 
   assert.equal(savedResults[0].eventType, 'transcript_ready_complete');
 });
 
+// Confirmed live (2026-09-24) that Voice-to-Form's actual event type is
+// supplemental_encounter_data_ready -- previously undocumented and was
+// being silently discarded as unrecognized (see config.js).
+test('POST with a supplemental_encounter_data_ready event (Voice-to-Form) is recognized and stored', async () => {
+  savedResults.length = 0;
+  global.fetch = async () => ({
+    ok: true,
+    json: async () => ({ data: JSON.stringify({ formId: 'referral_letter_to_clinician' }) }),
+  });
+  const res = await webhookHandler(
+    fakeRequest({
+      query: { access_token: 'test-webhook-secret' },
+      body: JSON.stringify({
+        specversion: '1.0',
+        type: 'supplemental_encounter_data_ready',
+        data: { retrievalUrl: 'https://example.com/retrieval/123', correlationId: 'corr-3' },
+      }),
+    }),
+    noopContext
+  );
+  assert.equal(res.status, 200);
+  assert.equal(savedResults.length, 1);
+  assert.equal(savedResults[0].eventType, 'supplemental_encounter_data_ready');
+});
+
 test('getResult OPTIONS preflight returns 204 with CORS headers', async () => {
   const res = await getResultHandler(fakeRequest({ method: 'OPTIONS', headers: {}, query: {} }), noopContext);
   assert.equal(res.status, 204);

@@ -12,6 +12,6 @@
     "ENTRA_CLIENT_SECRET": "",
 
     "DRAGON_API_SCOPE": "105be974-d66d-43c9-b813-57a967bbfd21/.default",
-    "DDE_RECOGNIZED_EVENT_TYPES": "encounter_data_ready_complete"
+    "DDE_RECOGNIZED_EVENT_TYPES": "encounter_data_ready_complete,transcript_ready_complete,encounter_data_updated,supplemental_encounter_data_ready"
   }
 }
