@@ -355,6 +355,15 @@ export default function App() {
   // otherwise so in-progress edits survive re-renders and repeat polls of
   // the same underlying data.
   const [editedNoteSections, setEditedNoteSections] = useState({});
+  // Measured content height per section (keyed by section id, same as
+  // editedNoteSections) — a plain multiline TextInput doesn't grow to fit
+  // its content on web (it renders as an HTML textarea with a small fixed
+  // default height and its own internal scrollbar), which is exactly the
+  // "small memo box with a slider" complaint for a full-length referral
+  // letter. onContentSizeChange reports the real height needed, applied
+  // as an explicit style height below so the box grows instead of
+  // scrolling internally.
+  const [noteInputHeights, setNoteInputHeights] = useState({});
   // Off by default — Dragon Copilot's note template includes sections the
   // encounter didn't cover (blank content); most of the time those are
   // just noise, but a physician may want to see and fill them in directly
@@ -1340,7 +1349,10 @@ export default function App() {
                     onChangeText={(text) =>
                       setEditedNoteSections((prev) => ({ ...prev, [section.id]: text }))
                     }
-                    style={styles.noteSectionInput}
+                    onContentSizeChange={(e) =>
+                      setNoteInputHeights((prev) => ({ ...prev, [section.id]: e.nativeEvent.contentSize.height }))
+                    }
+                    style={[styles.noteSectionInput, { height: Math.max(24, noteInputHeights[section.id] || 0) }]}
                   />
                 </View>
               ))
@@ -1402,7 +1414,10 @@ export default function App() {
                   onChangeText={(text) =>
                     setEditedNoteSections((prev) => ({ ...prev, [section.id]: text }))
                   }
-                  style={styles.noteSectionInput}
+                  onContentSizeChange={(e) =>
+                    setNoteInputHeights((prev) => ({ ...prev, [section.id]: e.nativeEvent.contentSize.height }))
+                  }
+                  style={[styles.noteSectionInput, { height: Math.max(24, noteInputHeights[section.id] || 0) }]}
                 />
               </View>
             ))}
