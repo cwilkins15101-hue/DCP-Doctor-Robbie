@@ -13,11 +13,15 @@
 //
 // Built from Microsoft's own sample apps (github.com/microsoft/
 // dragon-copilot-sdk-samples, plain-sample) since learn.microsoft.com's
-// actual SDK docs aren't reachable from this environment — field names and
-// call shapes below are copied as closely as possible from real sample
-// source, but haven't been confirmed against a live Dragon Copilot backend
-// yet. Treat anything marked "unconfirmed" as the first thing to check if
-// this doesn't work as expected.
+// actual SDK docs weren't reachable from this environment when this was
+// first written — field names and call shapes were copied as closely as
+// possible from real sample source. Confirmed working end to end via a
+// real live test (2026-09-24): sign-in, mic capture, streaming, and the
+// note/transcript returning in well under a minute for ~53 seconds of
+// audio (a fraction of the ~5 minute REST baseline, consistent with real
+// progressive streaming rather than store-and-forward) — since then, also
+// confirmed working with the official "Initialize" doc (which the user
+// was able to reach directly) and with Voice-to-Form output requested.
 //
 // Dictation mode (the SDK's other recording mode — per-text-field speech
 // input) is deliberately not wired up here; Doctor Robbie only needs
@@ -79,12 +83,13 @@ function getEhrClient(dragon) {
 
 // Bridges the SDK's token callback to Doctor Robbie's existing Microsoft
 // sign-in (msftAuth.js) rather than standing up a second, parallel MSAL
-// setup just for this SDK. UNCONFIRMED: the SDK calls this with a `scope`
-// parameter of its own choosing, which this ignores -- msftAuth.js can
-// only hand back one fixed-scope token from sign-in (it uses expo-auth-
-// session, not MSAL, so it can't request an arbitrary scope on demand). If
-// the exchange below rejects the token as the wrong scope/audience, this
-// is the first place to look.
+// setup just for this SDK. The SDK calls this with a `scope` parameter of
+// its own choosing, which this ignores -- msftAuth.js can only hand back
+// one fixed-scope token from sign-in (it uses expo-auth-session, not
+// MSAL, so it can't request an arbitrary scope on demand). Confirmed live
+// (2026-09-24) that the exchange below accepts that fixed-scope token
+// fine regardless -- the SDK evidently doesn't require the token's scope
+// to match what it asked for.
 async function acquireAccessToken(dragon, _scope) {
   const entraToken = await MsftAuth.getAccessToken();
   return getEhrClient(dragon).acquireToken({ accessToken: entraToken });
@@ -127,9 +132,9 @@ async function ensureInitialized() {
 // 'DOB', 'Chief Complaint' } shape (CSV or Epic FHIR-derived) -- nothing
 // close to the SDK sample's fully-structured ehrData.patient (separate
 // first/last name, a numeric gender code, LOINC-coded pronouns, ...).
-// UNCONFIRMED which of ehrData's fields are actually required -- this
-// fills in what can be confidently derived and leaves the rest out rather
-// than guess at values (e.g. a gender code) with no real data behind them.
+// Confirmed live (2026-09-24) that leaving out the fields we don't
+// confidently have (gender, pronouns, ...) rather than guessing at them
+// works fine -- ehrData.patient's other fields aren't strictly required.
 //
 // outputFormIds (Voice-to-Form) confirmed 2026-09-24 from Microsoft's own
 // V2F documentation: for the JavaScript SDK specifically, it's a plural
