@@ -136,7 +136,14 @@ async function ensureInitialized() {
 // top-level "outputFormIds" array passed directly in setSessionData's
 // object -- a different field name/placement than every other modality
 // (REST's "formIds", the raw WebSocket's singular "outputFormIds" nested
-// differently, etc.).
+// differently, etc.). Sends BOTH "outputFormIds" and "outputFormId" below
+// -- two different Microsoft doc pages disagree on the exact key name for
+// this SDK specifically (the V2F comparison table says plural
+// "outputFormIds"; the ambient-session-data reference example uses
+// singular "outputFormId", itself assigned an array of multiple ids).
+// Sending both costs nothing (an unrecognized key is just ignored) and
+// covers whichever one the real backend actually reads -- getting this
+// wrong would fail silently, the same way the WebSocket work did earlier.
 function buildAmbientData(correlationId, patient, outputFormIds) {
   const fullName = patient?.['Patient Name'] || '';
   const [firstName, ...rest] = fullName.split(' ').filter(Boolean);
@@ -150,7 +157,7 @@ function buildAmbientData(correlationId, patient, outputFormIds) {
       encounterReportLocale: 'en-US',
       encounterUxLocale: 'en-US',
     },
-    ...(outputFormIds && outputFormIds.length ? { outputFormIds } : {}),
+    ...(outputFormIds && outputFormIds.length ? { outputFormIds, outputFormId: outputFormIds } : {}),
     ...(patient
       ? {
           ehrData: {
