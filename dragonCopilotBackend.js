@@ -359,6 +359,7 @@ async function launchDragonCopilot({ correlationId, patient, launchType = 'copil
 
 export const DragonCopilotBackend = {
   missingConfigKeys,
+  newCorrelationId,
   submitRecording,
   uploadRecordingFile,
   startLiveRecordingStream,

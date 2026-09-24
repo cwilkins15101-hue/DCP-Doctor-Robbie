@@ -11,6 +11,7 @@ import { StatusBar } from 'expo-status-bar';
 import { Ionicons } from '@expo/vector-icons';
 import RenderHtml from 'react-native-render-html';
 import { DragonCopilotBackend } from './dragonCopilotBackend';
+import { DragonCopilotSdk } from './dragonCopilotSdk';
 import { DdeClient } from './ddeClient';
 import { EpicClient } from './epicClient';
 import { MsftAuth } from './msftAuth';
@@ -409,9 +410,9 @@ export default function App() {
 
   const pulseAnim = useRef(new Animated.Value(1)).current;
   const timerRef = useRef(null);
-  // Holds the Web Audio API nodes + live upload session for the web-only
-  // true-streaming recording path (see startLiveCaptureWeb/stopLiveCaptureWeb
-  // below) — null whenever not actively live-streaming.
+  // Holds the correlationId of the current SDK-based ambient recording
+  // (see startLiveCaptureWeb/stopLiveCaptureWeb below, dragonCopilotSdk.js)
+  // — null whenever not actively recording via the SDK.
   const liveCaptureRef = useRef(null);
 
   // Chart panel — slides in from the right rather than taking over the
@@ -573,86 +574,56 @@ export default function App() {
 
   // ---- Recording ----
 
-  // True live streaming (web only, 2026-09-24) — captures raw microphone
-  // audio via the Web Audio API and pushes it to dde-webhook as it's
-  // spoken, instead of recording a complete file and uploading it
-  // afterward. See dragonCopilotBackend.js's startLiveRecordingStream for
-  // why: a real-time streaming protocol fed an entire recording in one
-  // instantaneous burst (what the old expo-av + submitRecording path does,
-  // even though it goes out over that same real-time transport) is the
-  // leading theory for why Dragon Copilot never responds. ScriptProcessorNode
-  // is deprecated in favor of AudioWorkletNode, but needs no separate module
-  // file to load and works fine in Chrome, which is all this needs today.
+  // Web mic recording (2026-09-24) — uses the Dragon Copilot SDK for
+  // JavaScript's ambient recording mode (dragonCopilotSdk.js) instead of
+  // the hand-rolled Web Audio API capture + raw AAS WebSocket this
+  // replaced. That hand-rolled version streamed real, correctly-formatted
+  // audio and received clean protocol acknowledgments the whole way
+  // through, but never produced a note -- Microsoft's own contact traced
+  // this to DAXCore, a backend stage downstream of the WebSocket that's
+  // invisible to us. This SDK is Microsoft's own tested client for the
+  // same pipeline, and reports real upload-success/failure status the raw
+  // WebSocket never did.
+  // Rewritten 2026-09-24 to use the Dragon Copilot SDK for JavaScript
+  // (dragonCopilotSdk.js) instead of hand-rolling Web Audio API capture +
+  // the raw AAS WebSocket -- per Microsoft's own recommendation, after
+  // their contact identified that a backend stage (DAXCore) downstream of
+  // the WebSocket was where recordings were silently failing, invisible to
+  // us. The SDK handles microphone access, encoding, and uploading
+  // internally; this just starts/stops it and forwards its correlationId.
   //
-  // The processor must be connected to a destination to keep firing
-  // onaudioprocess in some browsers — routed through a silent (gain 0) node
-  // so the physician's own voice doesn't play back out loud while recording.
+  // Voice-to-Form (the "Output" picker/selectedFormId) isn't wired up here
+  // -- ambientData's documented shape (from Microsoft's own sample app,
+  // since learn.microsoft.com isn't reachable from this environment to
+  // confirm the full field list) didn't show an obvious outputFormIds-
+  // equivalent field. Live mic recordings get the standard clinical note
+  // only for now; the "Output" picker still works for manual file uploads
+  // (see submitUploadedFileToDragon).
   async function startLiveCaptureWeb() {
-    // Started BEFORE requesting the microphone, deliberately -- this may
-    // need to open a Microsoft sign-in popup internally (MsftAuth.
-    // getAccessToken(), if the cached token has expired), and that only
-    // reliably works while still inside the original click's user-gesture
-    // window. Awaiting getUserMedia() first (a separate, real async gap)
-    // can cause browsers to silently block a popup opened afterward, which
-    // hung indefinitely (2026-09-24 live test: no request ever reached the
-    // Network tab, meaning fetch() itself never got called -- getAccessToken
-    // never resolved). startLiveRecordingStream() is async now (2026-09-24
-    // Option B rewrite: it makes a real streamStart network call before
-    // it's safe to send audio, rather than just opening a stream
-    // controller), so it's awaited here before wiring up the microphone.
-    const liveSession = await DragonCopilotBackend.startLiveRecordingStream(
-      selectedPatient,
-      recordings.length + 1,
-      selectedFormId ? [selectedFormId] : undefined
-    );
-
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
-    const audioContext = new AudioContextClass({ sampleRate: 16000 });
-    // { sampleRate: 16000 } above is only a REQUEST -- browsers aren't
-    // required to honor it and can silently fall back to the hardware's
-    // native rate (commonly 48000) with no error. dde-webhook always
-    // declares 16000 Hz to Dragon Copilot regardless (see liveAasSession.js)
-    // -- if this ever logs something other than 16000, every chunk we send
-    // is real, validly-formed PCM that's still the wrong speed for what we
-    // told the server it is, which the AAS WebSocket has no way to detect
-    // from the bytes alone. Diagnostic only -- 2026-09-24, remove once
-    // confirmed one way or the other.
-    console.log('[startLiveCaptureWeb] AudioContext actual sampleRate:', audioContext.sampleRate);
-    const source = audioContext.createMediaStreamSource(stream);
-    const processor = audioContext.createScriptProcessor(4096, 1, 1);
-    const silentGain = audioContext.createGain();
-    silentGain.gain.value = 0;
-
-    processor.onaudioprocess = (event) => {
-      const input = event.inputBuffer.getChannelData(0); // Float32, -1..1
-      const pcmBytes = new DataView(new ArrayBuffer(input.length * 2));
-      for (let i = 0; i < input.length; i++) {
-        const sample = Math.max(-1, Math.min(1, input[i]));
-        // Signed 16-bit little-endian, per Microsoft's documented format.
-        pcmBytes.setInt16(i * 2, sample < 0 ? sample * 32768 : sample * 32767, true);
-      }
-      liveSession.pushChunk(new Uint8Array(pcmBytes.buffer));
-    };
-
-    source.connect(processor);
-    processor.connect(silentGain);
-    silentGain.connect(audioContext.destination);
-
-    liveCaptureRef.current = { stream, audioContext, source, processor, silentGain, liveSession };
-    return liveSession;
+    const correlationId = DragonCopilotBackend.newCorrelationId();
+    await DragonCopilotSdk.startAmbientRecording({
+      correlationId,
+      patient: selectedPatient,
+      onUploadStatusChanged: (status) => {
+        console.log('[DragonCopilotSdk] ambient upload status:', status);
+        // This is exactly the visibility into DAXCore's outcome the raw
+        // WebSocket never gave us (see App.js's 2026-09-24 history) --
+        // surface a real failure instead of leaving the physician staring
+        // at "processing" forever with no explanation.
+        if (status === 'uploadFailed') {
+          notify('Dragon Copilot upload failed', 'The SDK reported this recording failed to process.');
+        }
+      },
+    });
+    liveCaptureRef.current = { correlationId };
+    return correlationId;
   }
 
   function stopLiveCaptureWeb() {
     const capture = liveCaptureRef.current;
     if (!capture) return null;
-    capture.processor.disconnect();
-    capture.source.disconnect();
-    capture.silentGain.disconnect();
-    capture.stream.getTracks().forEach((track) => track.stop());
-    capture.audioContext.close();
     liveCaptureRef.current = null;
-    return capture.liveSession;
+    return capture.correlationId;
   }
 
   async function startRecording() {
@@ -662,7 +633,10 @@ export default function App() {
         setIsRecording(true);
         setDuration(0);
         setAudioUri(null);
-        setAudioFormat('audio/L16;rate=16000;channels=1');
+        // The SDK handles capture/encoding internally now (2026-09-24) --
+        // unlike the old hand-rolled path, we no longer control or know
+        // the exact wire format, so there's nothing accurate to show here.
+        setAudioFormat(null);
         return;
       }
       await Audio.setAudioModeAsync({ allowsRecordingIOS: true, playsInSilentModeIOS: true });
@@ -695,12 +669,12 @@ export default function App() {
   async function stopRecording() {
     try {
       if (Platform.OS === 'web' && liveCaptureRef.current) {
-        const liveSession = stopLiveCaptureWeb();
+        const correlationId = stopLiveCaptureWeb();
         setAudioUri('live-stream'); // non-null sentinel — there's no file/URI to hold, audio already sent
         setAudioName('Live stream');
         setAudioSource('mic');
         setIsRecording(false);
-        await finishLiveRecordingStream(liveSession);
+        await finishLiveRecordingStream(correlationId);
         return;
       }
       await recording.stopAndUnloadAsync();
@@ -1045,22 +1019,17 @@ export default function App() {
     }
   }
 
-  // Completes a live-streamed recording (see startLiveCaptureWeb) — the
-  // audio itself has already been sent as it was captured; this waits for
-  // any still-in-flight chunk uploads, sends RecordingClose (via
-  // liveSession.finish), and waits for dde-webhook to confirm Dragon
-  // Copilot accepted the whole thing. Mirrors submitAudioToDragon's
-  // completion handling above. `duration` (seconds) is the actual recorded
-  // length, tracked by the recording timer -- the new streamFinish
-  // endpoint needs this explicitly since there's no server-side wall-clock
-  // timing across the three separate calls the way there was in a single
-  // continuous stream.
-  async function finishLiveRecordingStream(liveSession) {
+  // Completes an SDK-based ambient recording (see startLiveCaptureWeb) --
+  // stops it (dragon.recording.toggleRecording again) and waits for the
+  // SDK's own recordingStopped event, then treats it the same way
+  // submitAudioToDragon's completion handling does: results still arrive
+  // later via the unchanged dde-webhook subscription + getResult poll.
+  async function finishLiveRecordingStream(correlationId) {
     setDragonError('');
     setSubmitting(true);
     setSubmitStep('Sending to Dragon Copilot…');
     try {
-      const correlationId = await liveSession.finish(duration);
+      await DragonCopilotSdk.stopAmbientRecording();
       setDragonCorrelationId(correlationId);
       setRecordings((prev) => [
         { id: `${correlationId}-${prev.length + 1}`, number: prev.length + 1, submittedAt: new Date(), durationSeconds: duration },
