@@ -294,6 +294,7 @@ export default function App() {
     { id: 'letter_to_patient', label: 'Letter to Patient' },
     { id: 'letter_to_pcp_gp', label: 'Letter to PCP/GP' },
     { id: 'referral_letter_to_clinician', label: 'Referral Letter' },
+    { id: 'fqhc_intake', label: 'FQHC Intake' },
   ];
 
   // Patient list
