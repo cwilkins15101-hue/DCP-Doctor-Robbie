@@ -97,13 +97,23 @@ async function submitRecording(audioUri, audioName, patient, existingCorrelation
   const correlationId = existingCorrelationId || newCorrelationId();
   const formData = new FormData();
 
+  // The recorded file's real MIME type — not just its display name. On web,
+  // Expo's HIGH_QUALITY preset actually records audio/webm (Opus inside a
+  // WebM container), regardless of the "Recording.m4a" label shown in the
+  // UI; only iOS/Android genuinely record AAC/m4a with this preset. Sent
+  // through so dde-webhook can tell Dragon Copilot the *real* format
+  // (dataFormat.webmOpus is one of its actively-documented codecs) instead
+  // of only ever declaring the generic/opaque byteStream fallback.
+  let audioMimeType = 'audio/m4a';
   if (Platform.OS === 'web') {
     const fileRes = await fetch(audioUri);
     const blob = await fileRes.blob();
+    audioMimeType = blob.type || audioMimeType;
     formData.append('audio', blob, audioName ?? 'recording.m4a');
   } else {
     formData.append('audio', { uri: audioUri, name: audioName ?? 'recording.m4a', type: 'audio/m4a' });
   }
+  formData.append('audioMimeType', audioMimeType);
 
   formData.append('correlationId', correlationId);
   formData.append('recordingId', String(recordingId));

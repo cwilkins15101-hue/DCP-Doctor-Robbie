@@ -61,6 +61,10 @@ async function handler(request, context) {
   const correlationId = form.get('correlationId') || crypto.randomUUID();
   const externalUserId = form.get('externalUserId') || undefined;
   const ehrInstanceId = form.get('ehrInstanceId') || undefined;
+  // The recorded file's real MIME type (e.g. audio/webm on web, audio/m4a
+  // on iOS/Android) — used to declare an accurate dataFormat on the AAS
+  // WebSocket instead of only ever falling back to the generic byteStream.
+  const audioMimeType = form.get('audioMimeType') || undefined;
   // Distinguishes multiple recordings added to the same encounter
   // (correlationId) — reusing recordingId 1 for a second recording looks
   // to Dragon Copilot like re-finalizing the same take, which is why a
@@ -105,6 +109,7 @@ async function handler(request, context) {
       externalUserId,
       outputFormIds,
       entraUserToken,
+      audioMimeType,
       // Must stay bound to `context` — @azure/functions v4's context.log
       // uses real private class fields internally, so passing the bare
       // method reference (as this used to) detaches it from that internal

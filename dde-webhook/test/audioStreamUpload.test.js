@@ -17,6 +17,7 @@ const {
   buildTextMessage,
   parseTextMessage,
   buildDataChunkFrame,
+  buildDataFormat,
   CHUNK_SIZE_BYTES,
 } = require('../src/lib/audioStreamUpload');
 const config = require('../src/lib/config');
@@ -54,6 +55,15 @@ test('buildDataChunkFrame base64-encodes the audio bytes inside a JSON payload',
   const parsed = JSON.parse(frame.toString('utf8'));
   assert.equal(parsed.DataStart, 128);
   assert.equal(Buffer.from(parsed.Data, 'base64').compare(buf), 0);
+});
+
+test('buildDataFormat declares webmOpus for a real WebM recording (Expo web preset)', () => {
+  assert.deepEqual(buildDataFormat('audio/webm'), { webmOpus: { sampleRateHz: 48000 } });
+});
+
+test('buildDataFormat falls back to byteStream for AAC/m4a (iOS/Android) or unknown types', () => {
+  assert.deepEqual(buildDataFormat('audio/m4a'), { byteStream: {} });
+  assert.deepEqual(buildDataFormat(undefined), { byteStream: {} });
 });
 
 // ---- Full protocol, against a real local WebSocket server ----

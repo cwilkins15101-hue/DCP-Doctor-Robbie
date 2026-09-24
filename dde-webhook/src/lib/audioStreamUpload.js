@@ -68,6 +68,28 @@ function buildDataChunkFrame(dataStart, buffer) {
   return Buffer.from(JSON.stringify({ DataStart: dataStart, Data: buffer.toString('base64') }), 'utf8');
 }
 
+// Declares the *actual* recorded format instead of only ever falling back
+// to the generic/opaque byteStream. Checked live (2026-09-23): Expo's
+// HIGH_QUALITY preset records genuine WebM/Opus on web (regardless of the
+// "Recording.m4a" label the app shows), which is one of the doc's
+// specifically-supported codecs — byteStream is documented as the opaque
+// option for audio that doesn't fit pcm/opus/webmOpus, so a real webmOpus
+// recording declared as byteStream may be handled by a more limited code
+// path (accepted at the transport level but not fully processed), which
+// would be consistent with every live test so far: fully accepted, then
+// silence. sampleRateHz: 48000 is an educated default (the common browser
+// microphone-capture default), not confirmed — Expo's web preset doesn't
+// specify a sample rate itself, so this may need adjusting if still wrong.
+// iOS/Android genuinely record AAC/m4a with this preset, which has no
+// specific documented dataFormat option, so byteStream remains correct
+// there.
+function buildDataFormat(audioMimeType) {
+  if (audioMimeType && audioMimeType.includes('webm')) {
+    return { webmOpus: { sampleRateHz: 48000 } };
+  }
+  return { byteStream: {} };
+}
+
 function waitForDrain(ws) {
   return new Promise((resolve) => {
     const check = () => {
@@ -109,6 +131,11 @@ async function streamRecording({
   // Copilot's own backend was silently never routing a response back for
   // an identity it couldn't reconcile).
   entraUserToken,
+  // The recorded file's real MIME type (e.g. "audio/webm" on web,
+  // "audio/m4a" on iOS/Android) — see buildDataFormat() for how this maps
+  // to a specific, documented dataFormat instead of only ever falling back
+  // to the generic/opaque byteStream.
+  audioMimeType,
   // Azure Functions only reliably captures/correlates context.log with a
   // given invocation in the Log stream -- plain console.log turned out NOT
   // to be trustworthy here: a live test (2026-09-23) proved the WebSocket
@@ -221,19 +248,10 @@ async function streamRecording({
       clearTimeout(openTimer);
       log(`[audioStreamUpload] WebSocket open (correlationId=${correlationId}, recordingId=${wsRecordingId})`);
       try {
+        const dataFormat = buildDataFormat(audioMimeType);
         const recordingOpenBody = {
           recordingId: wsRecordingId,
-          // The app records m4a/AAC, not one of the other documented
-          // dataFormat options (raw PCM, Ogg Opus, WebM Opus) — those are
-          // specific codecs the server presumably tries to decode, while
-          // "byteStream" is documented as the opaque/unstructured option.
-          // Leaving dataFormat unset (as before) let the server assume its
-          // own default, almost certainly raw PCM, which our actual bytes
-          // are not — a strong candidate for the "Invalid DataChunk
-          // received" rejection seen live. formatSpecifier isn't given an
-          // example value anywhere in the docs we have (and isn't marked
-          // required), so it's left unset rather than guessed.
-          dataFormat: { byteStream: {} },
+          dataFormat,
           ambientSessionData: {
             productId: config.dragonProductId(),
             partnerId: config.dragonPartnerGuid(),
@@ -255,7 +273,7 @@ async function streamRecording({
           ...(outputFormIds && outputFormIds.length ? { outputFormIds } : {}),
         };
         ws.send(buildTextMessage('RecordingOpen', recordingOpenBody));
-        log(`[audioStreamUpload] Sent RecordingOpen (${audioBuffer.length} bytes to stream, dataFormat=byteStream)`);
+        log(`[audioStreamUpload] Sent RecordingOpen (${audioBuffer.length} bytes to stream, audioMimeType=${audioMimeType}, dataFormat=${JSON.stringify(dataFormat)})`);
 
         let offset = 0;
         for (; offset < audioBuffer.length; offset += CHUNK_SIZE_BYTES) {
@@ -321,4 +339,11 @@ async function streamRecording({
   });
 }
 
-module.exports = { streamRecording, buildTextMessage, parseTextMessage, buildDataChunkFrame, CHUNK_SIZE_BYTES };
+module.exports = {
+  streamRecording,
+  buildTextMessage,
+  parseTextMessage,
+  buildDataChunkFrame,
+  buildDataFormat,
+  CHUNK_SIZE_BYTES,
+};
