@@ -186,6 +186,35 @@ function findArtifact(artifacts, keyword, excludeKeyword) {
   );
 }
 
+// Remembers only the single most-recently-submitted encounter (web only,
+// via localStorage) so a physician can get back to its note/transcript
+// after closing or reloading the app — not a full browsable history,
+// just "show me the last one" (2026-09-24). Native platforms don't get
+// this (out of scope, same as the live-streaming work elsewhere in this
+// file) — localStorage is browser-only anyway. Wrapped defensively since
+// a private/incognito window can throw on access rather than just
+// returning null.
+const LAST_ENCOUNTER_STORAGE_KEY = 'doctorRobbie.lastEncounter';
+
+function saveLastEncounter(entry) {
+  if (Platform.OS !== 'web') return;
+  try {
+    window.localStorage.setItem(LAST_ENCOUNTER_STORAGE_KEY, JSON.stringify(entry));
+  } catch {
+    // best-effort only
+  }
+}
+
+function loadLastEncounter() {
+  if (Platform.OS !== 'web') return null;
+  try {
+    const raw = window.localStorage.getItem(LAST_ENCOUNTER_STORAGE_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
 // React Native's Alert.alert doesn't reliably show anything on the web
 // build (Alert has no real web implementation) — every plain title+message
 // confirmation/error in this app goes through here instead, falling back
@@ -313,6 +342,12 @@ export default function App() {
   const [dragonCorrelationId, setDragonCorrelationId] = useState(null);
   const [dragonDdeChecking, setDragonDdeChecking] = useState(false);
   const [dragonDdeResult, setDragonDdeResult] = useState(null);
+  // The last encounter submitted in a previous app session (web only,
+  // localStorage — see saveLastEncounter/loadLastEncounter above). Lets a
+  // physician get back to it after closing/reloading, via the "View Last
+  // Note" button on the record screen — read once on mount, refreshed
+  // whenever a new encounter's correlationId is set.
+  const [lastEncounter, setLastEncounter] = useState(null);
   const [noteTab, setNoteTab] = useState('note');
   // Physician edits to the note's sections, keyed by section id — seeded
   // from the parsed note whenever the server actually delivers new content
@@ -424,6 +459,22 @@ export default function App() {
       setPermissionGranted(granted);
     })();
   }, []);
+
+  useEffect(() => {
+    setLastEncounter(loadLastEncounter());
+  }, []);
+
+  // Persists every new encounter as "the last one" (overwriting whatever
+  // was there before) — only fires when correlationId actually changes to
+  // a new value, i.e. once per fresh encounter, not on every additional
+  // recording added to one already in progress.
+  useEffect(() => {
+    if (!dragonCorrelationId) return;
+    const entry = { correlationId: dragonCorrelationId, patient: selectedPatient, submittedAt: new Date().toISOString() };
+    saveLastEncounter(entry);
+    setLastEncounter(entry);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dragonCorrelationId]);
 
   // Watches for Dragon Copilot's results in the background, updating
   // dragonDdeResult as soon as either the note or the transcript lands —
@@ -1094,6 +1145,35 @@ export default function App() {
     }
   }
 
+  // Jumps straight to the last encounter saved by a previous app session
+  // (see lastEncounter/loadLastEncounter above) and fetches its current
+  // note/transcript/form output right away, rather than waiting for the
+  // usual 5-second poll tick. Fetches using the known correlationId
+  // directly instead of relying on dragonCorrelationId from state, since
+  // setDragonCorrelationId() below won't have taken effect yet within this
+  // same function call. lastSubmittedAt is left at null (not "now") since
+  // this isn't a new submission — treating it as one would make an
+  // already-ready note look stuck on "Submitted" until re-fetched.
+  async function handleResumeLastEncounter() {
+    if (!lastEncounter) return;
+    setDragonError('');
+    setSelectedPatient(lastEncounter.patient ?? null);
+    setDragonCorrelationId(lastEncounter.correlationId);
+    setLastSubmittedAt(null);
+    setRecordings([]);
+    setDragonDdeResult(null);
+    setScreen('dragonNote');
+    setDragonDdeChecking(true);
+    try {
+      const result = await DdeClient.fetchResult(lastEncounter.correlationId);
+      if (result) setDragonDdeResult(result);
+    } catch (err) {
+      setDragonError(String(err?.message ?? err));
+    } finally {
+      setDragonDdeChecking(false);
+    }
+  }
+
   // ---- Patient display helpers ----
 
   function patientDisplayName(patient) {
@@ -1560,6 +1640,20 @@ export default function App() {
             activeOpacity={0.85}
           >
             <Text style={styles.viewResultsButtonText}>‹ View Dragon Copilot Results</Text>
+          </TouchableOpacity>
+        )}
+        {/* Only shown before starting a new encounter this session — once
+            dragonCorrelationId is set (a new recording started, or this
+            was just tapped), the button above takes over. */}
+        {!dragonCorrelationId && lastEncounter && (
+          <TouchableOpacity
+            style={styles.viewResultsButton}
+            onPress={handleResumeLastEncounter}
+            activeOpacity={0.85}
+          >
+            <Text style={styles.viewResultsButtonText}>
+              ‹ View Last Note{lastEncounter.patient ? ` (${patientDisplayName(lastEncounter.patient)})` : ''}
+            </Text>
           </TouchableOpacity>
         )}
         <Text style={styles.title}>Doctor Robbie</Text>
