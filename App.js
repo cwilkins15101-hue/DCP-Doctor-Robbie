@@ -530,6 +530,16 @@ export default function App() {
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
     const AudioContextClass = window.AudioContext || window.webkitAudioContext;
     const audioContext = new AudioContextClass({ sampleRate: 16000 });
+    // { sampleRate: 16000 } above is only a REQUEST -- browsers aren't
+    // required to honor it and can silently fall back to the hardware's
+    // native rate (commonly 48000) with no error. dde-webhook always
+    // declares 16000 Hz to Dragon Copilot regardless (see liveAasSession.js)
+    // -- if this ever logs something other than 16000, every chunk we send
+    // is real, validly-formed PCM that's still the wrong speed for what we
+    // told the server it is, which the AAS WebSocket has no way to detect
+    // from the bytes alone. Diagnostic only -- 2026-09-24, remove once
+    // confirmed one way or the other.
+    console.log('[startLiveCaptureWeb] AudioContext actual sampleRate:', audioContext.sampleRate);
     const source = audioContext.createMediaStreamSource(stream);
     const processor = audioContext.createScriptProcessor(4096, 1, 1);
     const silentGain = audioContext.createGain();
