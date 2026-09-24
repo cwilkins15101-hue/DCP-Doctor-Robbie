@@ -108,6 +108,12 @@ function formatClockTime(date) {
 // additional note sections" toggle) rather than this function silently
 // dropping them. Returns null only when the shape itself doesn't match
 // (so callers can fall back to raw JSON as a last resort).
+//
+// Also reused for Voice-to-Form output (e.g. a referral letter) — confirmed
+// live 2026-09-24 that a real delivered form uses this exact same
+// document.title + resources[] shape, just with `id` instead of
+// `legacy_id` on each resource (a newer payload_version, "1.1.0" vs
+// whatever the note's predates) — falling back to `id` covers both.
 // ---------------------------------------------------------------------------
 function parseDragonNote(noteBody) {
   try {
@@ -116,8 +122,8 @@ function parseDragonNote(noteBody) {
     const payload = JSON.parse(raw);
     if (!Array.isArray(payload.resources)) return null;
     const sections = payload.resources.map((r) => ({
-      id: r.legacy_id,
-      title: r.context?.display_description || r.legacy_id,
+      id: r.legacy_id ?? r.id,
+      title: r.context?.display_description || r.legacy_id || r.id,
       content: (r.content || '').replace(/\r\n/g, '\n').trim(),
     }));
     return { title: payload.document?.title || 'Clinical Note', sections };
@@ -1290,11 +1296,39 @@ export default function App() {
       return <Text style={styles.dragonBodyText}>The transcript hasn't been delivered yet.</Text>;
     }
 
-    // Voice-to-Form (e.g. a referral letter) — raw JSON only for now, since
-    // the response payload's shape isn't confirmed yet (unlike the note and
-    // transcript, whose shapes were confirmed from real deliveries). Revisit
-    // once a real one has been inspected.
+    // Voice-to-Form (e.g. a referral letter) — confirmed live 2026-09-24
+    // that a real delivered form shares the note's exact document.title +
+    // resources[] shape, so parseDragonNote() handles both. Editable the
+    // same way note sections are — editedNoteSections is keyed by resource
+    // id, so there's no collision between a note's sections and a form
+    // output's. No "show additional sections" toggle here since a form
+    // output has always been a single, always-populated section in
+    // testing so far, unlike the note's many largely-empty template
+    // sections.
     function renderFormOutputTab() {
+      const parsedFormOutput = formOutputResult ? parseDragonNote(formOutputResult) : null;
+      if (parsedFormOutput) {
+        return (
+          <>
+            <Text style={styles.noteTitle}>{parsedFormOutput.title}</Text>
+            {parsedFormOutput.sections.map((section) => (
+              <View key={section.id} style={styles.noteSection}>
+                <Text style={styles.noteSectionTitle}>{section.title}</Text>
+                <TextInput
+                  multiline
+                  scrollEnabled={false}
+                  textAlignVertical="top"
+                  value={editedNoteSections[section.id] ?? section.content}
+                  onChangeText={(text) =>
+                    setEditedNoteSections((prev) => ({ ...prev, [section.id]: text }))
+                  }
+                  style={styles.noteSectionInput}
+                />
+              </View>
+            ))}
+          </>
+        );
+      }
       if (formOutputResult) {
         return <Text style={styles.summaryText} selectable>{JSON.stringify(formOutputResult, null, 2)}</Text>;
       }
