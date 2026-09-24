@@ -235,6 +235,12 @@ export default function App() {
   const [duration, setDuration] = useState(0);
   const [audioUri, setAudioUri] = useState(null);
   const [audioName, setAudioName] = useState(null);
+  // The real recorded/picked format, shown in the UI instead of trusting
+  // the "Recording.m4a" label — on web, expo-av's HIGH_QUALITY preset
+  // actually records audio/webm regardless of that label (confirmed
+  // 2026-09-23, see audioStreamUpload.js), so the label alone is
+  // misleading for exactly the recordings physicians look at most.
+  const [audioFormat, setAudioFormat] = useState(null);
   const [audioSource, setAudioSource] = useState(null); // 'mic' | 'upload' — mic audio auto-submits on stop
   // Voice-to-Form — null means the standard clinical note (the existing
   // default); otherwise one of Dragon Copilot's outputFormIds. Test values
@@ -494,8 +500,22 @@ export default function App() {
       setIsRecording(true);
       setDuration(0);
       setAudioUri(null);
+      setAudioFormat(null);
     } catch (err) {
       console.error('Failed to start recording:', err);
+    }
+  }
+
+  // Web's HIGH_QUALITY preset actually records audio/webm, not the m4a its
+  // label suggests — iOS/Android genuinely do record m4a (AAC) with this
+  // same preset, so that assumption is safe to keep for native.
+  async function detectRecordedAudioFormat(uri) {
+    if (Platform.OS !== 'web') return 'audio/m4a';
+    try {
+      const blob = await (await fetch(uri)).blob();
+      return blob.type || 'audio/m4a';
+    } catch {
+      return 'audio/m4a';
     }
   }
 
@@ -507,6 +527,7 @@ export default function App() {
       const name = 'Recording.m4a';
       setAudioUri(uri);
       setAudioName(name);
+      setAudioFormat(await detectRecordedAudioFormat(uri));
       setAudioSource('mic');
       setRecording(null);
       setIsRecording(false);
@@ -539,6 +560,7 @@ export default function App() {
         if (isRecording) await stopRecording();
         setAudioUri(file.uri);
         setAudioName(file.name);
+        setAudioFormat(file.mimeType || null);
         setAudioSource('upload');
         setDuration(0);
       }
@@ -795,6 +817,7 @@ export default function App() {
   function handleDiscard() {
     setAudioUri(null);
     setAudioName(null);
+    setAudioFormat(null);
     setAudioSource(null);
     setDuration(0);
   }
@@ -853,6 +876,7 @@ export default function App() {
   function handleRecordAnother() {
     setAudioUri(null);
     setAudioName(null);
+    setAudioFormat(null);
     setAudioSource(null);
     setDuration(0);
     setScreen('record');
@@ -1217,6 +1241,7 @@ export default function App() {
                         setScreen('record');
                         setAudioUri(null);
                         setAudioName(null);
+                        setAudioFormat(null);
                         setDragonCorrelationId(null);
                         setDragonDdeResult(null);
                         setRecordings([]);
@@ -1417,6 +1442,7 @@ export default function App() {
                 <Text style={styles.readyText}>
                   {audioName ?? 'Recording'}{duration > 0 ? ` (${formatDuration(duration)})` : ''}
                 </Text>
+                {audioFormat && <Text style={styles.formatText}>Format: {audioFormat}</Text>}
                 {submitting ? (
                   <View style={[styles.primaryButton, styles.buttonDisabled]}>
                     <View style={styles.loadingRow}>
@@ -1438,6 +1464,7 @@ export default function App() {
                 <Text style={styles.readyText}>
                   {audioName ?? 'Recording'}{duration > 0 ? ` (${formatDuration(duration)})` : ''}
                 </Text>
+                {audioFormat && <Text style={styles.formatText}>Format: {audioFormat}</Text>}
                 <TouchableOpacity
                   style={[styles.primaryButton, submitting && styles.buttonDisabled]}
                   onPress={handleDragonSubmitRecording}
@@ -1899,6 +1926,7 @@ const styles = StyleSheet.create({
 
   actions: { marginTop: 48, alignItems: 'center', gap: 12, width: '100%' },
   readyText: { fontSize: 14, color: C.textMid, marginBottom: 4 },
+  formatText: { fontSize: 12, color: C.textLight, marginBottom: 4 },
   primaryButton: {
     backgroundColor: C.blue, paddingVertical: 15, paddingHorizontal: 32,
     borderRadius: 14, width: '100%', alignItems: 'center',
