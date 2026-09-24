@@ -5,10 +5,22 @@
 const config = require('./config');
 const { getDragonApiToken, describeTokenForAllowList } = require('./dragonApiAuth');
 
-async function createAmbientSession({ correlationId, externalUserId, data, ehrInstanceId }) {
+// outputFormIds requests Voice-to-Form output(s) instead of (or alongside)
+// the standard clinical note. Confirmed 2026-09-24 from Microsoft's V2F
+// onboarding guide: for this REST modality (Ambient Session Create) it goes
+// as a top-level "formIds" key inside the *stringified* data field -- a
+// different field name and a different place than the AAS WebSocket, which
+// takes it as its own outputFormIds field on the RecordingOpen message
+// (see liveAasSession.js) and does NOT read it from here. Only merged in
+// when passed, so existing callers (streamStart.js, which sets it on
+// RecordingOpen instead) are unaffected.
+async function createAmbientSession({ correlationId, externalUserId, data, ehrInstanceId, outputFormIds }) {
   const token = await getDragonApiToken();
   const customerId = config.dragonEnvironmentId();
   const url = `${config.dragonApiBaseUrl()}/ambient-sessions?api-version=2&customerId=${encodeURIComponent(customerId)}`;
+
+  const sessionData =
+    outputFormIds && outputFormIds.length ? { ...(data || {}), formIds: outputFormIds } : data;
 
   const body = {
     correlationId,
@@ -17,7 +29,7 @@ async function createAmbientSession({ correlationId, externalUserId, data, ehrIn
     customerId,
     externalUserId,
     ehrInstanceId,
-    ...(data !== undefined ? { data: JSON.stringify(data) } : {}),
+    ...(sessionData !== undefined ? { data: JSON.stringify(sessionData) } : {}),
   };
 
   const response = await fetch(url, {

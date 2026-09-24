@@ -4,9 +4,10 @@
 // untouched. Restored 2026-09-24: uploads via the Ambient Audio Streaming
 // REST API (storeChunk/finalizeUpload, audioUpload.js) instead of the AAS
 // WebSocket. A pure app-only, server-to-server flow — the physician never
-// signs in to Microsoft for this. Doesn't support Voice-to-Form's
-// outputFormIds field (REST-only limitation; that field only exists on the
-// WebSocket API) — uploaded files always get the standard clinical note.
+// signs in to Microsoft for this. Supports Voice-to-Form (outputFormIds)
+// too, confirmed 2026-09-24 from Microsoft's V2F onboarding guide — for
+// this REST modality it's passed as "formIds" inside the ambient session's
+// data field (see ambientSession.js), not on the upload call itself.
 // Results arrive later via the existing webhook + getResult poll, same as
 // every other submission path.
 const { app } = require('@azure/functions');
@@ -48,6 +49,10 @@ async function handler(request, context) {
   // second recording on an existing encounter never triggered a new
   // notification. Defaults to 1 for a first/only recording.
   const recordingId = parseInt(form.get('recordingId'), 10) || 1;
+  const outputFormIdsRaw = form.get('outputFormIds');
+  const outputFormIds = outputFormIdsRaw
+    ? outputFormIdsRaw.split(',').map((s) => s.trim()).filter(Boolean)
+    : undefined;
 
   const contextRaw = form.get('context');
   let sessionData;
@@ -65,7 +70,7 @@ async function handler(request, context) {
   }
 
   try {
-    await ambientSession.createAmbientSession({ correlationId, externalUserId, data: sessionData, ehrInstanceId });
+    await ambientSession.createAmbientSession({ correlationId, externalUserId, data: sessionData, ehrInstanceId, outputFormIds });
     await audioUpload.uploadRecording({ correlationId, audioBuffer, recordingId, ehrInstanceId, externalUserId });
   } catch (err) {
     context.error(`submitRecordingFile failed for correlationId ${correlationId}:`, err);

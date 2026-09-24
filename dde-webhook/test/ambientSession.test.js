@@ -42,6 +42,25 @@ test('createAmbientSession PUTs to the Partner API host with the right body', as
   assert.equal(body.data, JSON.stringify({ foo: 'bar' }));
 });
 
+test('createAmbientSession merges outputFormIds into data.formIds (Voice-to-Form, REST modality)', async () => {
+  await createAmbientSession({
+    correlationId: 'corr-1',
+    data: { patientName: 'Jane Smith' },
+    outputFormIds: ['visit_summary', 'letter_to_patient'],
+  });
+  const body = JSON.parse(calls[0].options.body);
+  assert.deepEqual(JSON.parse(body.data), {
+    patientName: 'Jane Smith',
+    formIds: ['visit_summary', 'letter_to_patient'],
+  });
+});
+
+test('createAmbientSession sends formIds even with no other session data', async () => {
+  await createAmbientSession({ correlationId: 'corr-1', outputFormIds: ['visit_summary'] });
+  const body = JSON.parse(calls[0].options.body);
+  assert.deepEqual(JSON.parse(body.data), { formIds: ['visit_summary'] });
+});
+
 test('endAmbientSession DELETEs the session by correlationId', async () => {
   await endAmbientSession('corr-1');
   assert.equal(calls.length, 1);

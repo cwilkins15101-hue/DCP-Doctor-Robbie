@@ -147,6 +147,20 @@ test('passes through a distinct recordingId for an additional recording on the s
   assert.equal(uploadCall.args.recordingId, 2);
 });
 
+test('parses a comma-separated outputFormIds field and passes it to createAmbientSession (Voice-to-Form)', async () => {
+  const res = await handler(
+    fakeFormDataRequest({
+      headers: { 'x-app-secret': 'test-app-secret' },
+      fields: { correlationId: 'corr-43', outputFormIds: 'visit_summary, letter_to_patient' },
+      audioBytes: Buffer.from([1, 2]),
+    }),
+    noopContext
+  );
+  assert.equal(res.status, 200);
+  const sessionCall = recordedCalls.find((c) => c.fn === 'createAmbientSession');
+  assert.deepEqual(sessionCall.args.outputFormIds, ['visit_summary', 'letter_to_patient']);
+});
+
 test('generates a correlationId when none is provided', async () => {
   const res = await handler(
     fakeFormDataRequest({

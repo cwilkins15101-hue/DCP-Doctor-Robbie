@@ -239,10 +239,12 @@ async function submitRecording(audioUri, audioName, patient, existingCorrelation
 // physician sign-in involved, same as this app used before mic recordings
 // switched to the AAS WebSocket. Restored 2026-09-24 after live testing
 // showed the WebSocket path stalling for this flow specifically, while this
-// REST path has a track record of working reliably end to end. Doesn't
-// support outputFormIds (Voice-to-Form) — that field only exists on the
-// WebSocket API — so uploaded files always get the standard clinical note.
-async function uploadRecordingFile(audioUri, audioName, patient, existingCorrelationId, recordingId = 1) {
+// REST path has a track record of working reliably end to end. Supports
+// outputFormIds (Voice-to-Form) too, confirmed 2026-09-24 from Microsoft's
+// V2F onboarding guide -- dde-webhook passes it through to the ambient
+// session (a different mechanism than the WebSocket's RecordingOpen field,
+// see ambientSession.js).
+async function uploadRecordingFile(audioUri, audioName, patient, existingCorrelationId, recordingId = 1, outputFormIds) {
   const missing = missingConfigKeys();
   if (missing.length > 0) {
     throw new Error(`Dragon Copilot backend isn't configured: missing ${missing.join(', ')}`);
@@ -262,6 +264,9 @@ async function uploadRecordingFile(audioUri, audioName, patient, existingCorrela
   formData.append('correlationId', correlationId);
   formData.append('recordingId', String(recordingId));
   formData.append('externalUserId', EXTERNAL_USER_ID);
+  if (outputFormIds && outputFormIds.length) {
+    formData.append('outputFormIds', outputFormIds.join(','));
+  }
   const context = buildContext(patient);
   if (context) formData.append('context', JSON.stringify(context));
 

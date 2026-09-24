@@ -1002,10 +1002,9 @@ export default function App() {
   // over the AAS WebSocket), kept as its own function so mic recordings are
   // untouched. Restored 2026-09-24 after live testing showed the WebSocket
   // path stalling for manually-uploaded files specifically, while this REST
-  // path has a track record of working reliably end to end. Doesn't support
-  // Voice-to-Form (outputFormIds) — that's WebSocket-only — so an uploaded
-  // file always gets the standard clinical note regardless of the "Output"
-  // picker's selection.
+  // path has a track record of working reliably end to end. Supports the
+  // "Output" picker (Voice-to-Form) too, confirmed 2026-09-24 from
+  // Microsoft's V2F onboarding guide.
   async function submitUploadedFileToDragon(uri, name) {
     setDragonError('');
     setSubmitting(true);
@@ -1016,7 +1015,8 @@ export default function App() {
         name,
         selectedPatient,
         dragonCorrelationId,
-        recordings.length + 1
+        recordings.length + 1,
+        selectedFormId ? [selectedFormId] : undefined
       );
       setDragonCorrelationId(correlationId);
       setRecordings((prev) => [
