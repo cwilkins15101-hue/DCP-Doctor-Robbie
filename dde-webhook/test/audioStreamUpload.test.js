@@ -14,6 +14,7 @@ process.env.DRAGON_ENVIRONMENT_ID = 'customer-guid';
 
 const {
   streamRecording,
+  streamRecordingLive,
   buildTextMessage,
   parseTextMessage,
   buildDataChunkFrame,
@@ -234,6 +235,62 @@ test('streamRecording surfaces response headers when the upgrade is rejected wit
 test('streamRecording rejects immediately if entraUserToken is missing', async () => {
   await assert.rejects(
     () => streamRecording({ correlationId: 'corr-5', audioBuffer: Buffer.from([1, 2, 3]) }),
+    /requires entraUserToken/
+  );
+});
+
+// ---- streamRecordingLive: true live streaming, not store-and-forward ----
+
+async function* fakeLiveMicrophone(chunks, delayMs = 5) {
+  for (const chunk of chunks) {
+    // A real delay between chunks, however small -- proves the function
+    // forwards each one as it arrives rather than needing them all upfront
+    // (an async generator with no delay could still be accidentally drained
+    // into an array before use).
+    await new Promise((resolve) => setTimeout(resolve, delayMs));
+    yield chunk;
+  }
+}
+
+test('streamRecordingLive declares dataFormat.pcm and forwards chunks as they arrive, in order', async () => {
+  const { wss, state, port } = startFakeAasServer();
+  process.env.AAS_WS_URL = `ws://127.0.0.1:${port()}/ws`;
+
+  const chunks = [Buffer.from([1, 2, 3]), Buffer.from([4, 5]), Buffer.from([6, 7, 8, 9])];
+
+  const result = await streamRecordingLive({
+    correlationId: 'live-corr-1',
+    incomingChunks: fakeLiveMicrophone(chunks),
+    externalUserId: 'user-1',
+    entraUserToken: 'fake-entra-user-token',
+  });
+
+  assert.ok(result);
+  assert.deepEqual(state.recordingOpenBody.dataFormat, { pcm: { sampleRateHz: 16000, bitcount: 16, channels: 1 } });
+  assert.equal(state.upgradeHeaders.authorization, 'Bearer fake-entra-user-token');
+
+  // Every chunk arrived, in order, at the right running offset -- not
+  // concatenated/re-sliced, unlike streamRecording()'s fixed-size chunking.
+  assert.equal(state.dataChunks.length, 3);
+  assert.equal(Buffer.from(state.dataChunks[0].Data, 'base64').compare(chunks[0]), 0);
+  assert.equal(Buffer.from(state.dataChunks[1].Data, 'base64').compare(chunks[1]), 0);
+  assert.equal(Buffer.from(state.dataChunks[2].Data, 'base64').compare(chunks[2]), 0);
+  assert.equal(state.dataChunks[0].DataStart, 0);
+  assert.equal(state.dataChunks[1].DataStart, 3);
+  assert.equal(state.dataChunks[2].DataStart, 5);
+
+  // recordingLengthSeconds is computed from real elapsed time, not a
+  // client-supplied guess -- 3 chunks * 5ms delay is well under 1s, so this
+  // should round up to the 1-second floor rather than 0.
+  assert.equal(state.recordingCloseBody.recordingLengthSeconds, 1);
+
+  wss.close();
+  delete process.env.AAS_WS_URL;
+});
+
+test('streamRecordingLive rejects immediately if entraUserToken is missing', async () => {
+  await assert.rejects(
+    () => streamRecordingLive({ correlationId: 'live-corr-2', incomingChunks: fakeLiveMicrophone([]) }),
     /requires entraUserToken/
   );
 });

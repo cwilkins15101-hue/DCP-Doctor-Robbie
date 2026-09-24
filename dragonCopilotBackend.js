@@ -58,6 +58,90 @@ function buildContext(patient) {
   };
 }
 
+// Starts a TRUE live stream to Dragon Copilot — web only for now (2026-09-24;
+// iOS/Android still use the batch submitRecording() below). Unlike
+// submitRecording(), which waits for a finished file and uploads it in one
+// shot, this opens the upload the moment recording starts and keeps it open
+// for the whole encounter: the caller pushes raw PCM audio chunks in as
+// they're captured (App.js's Web Audio API code), and this streams them to
+// dde-webhook's streamRecordingLive endpoint as a single long-lived HTTP
+// request with a live (not pre-buffered) body, which forwards each chunk to
+// Dragon Copilot's WebSocket the instant it arrives. This is the fix being
+// tried for every earlier attempt hanging with total silence despite a
+// fully protocol-correct request — the leading theory is that a real-time
+// pipeline has nothing to do with an entire recording dumped in one
+// instantaneous burst after the fact, which is what submitRecording() does
+// even though it goes out over the same real-time WebSocket transport.
+//
+// Chunks must already be raw PCM, 16-bit little-endian, 16000 Hz, mono —
+// dde-webhook declares exactly that format to Dragon Copilot and does not
+// convert anything; whatever bytes arrive are what gets sent.
+function startLiveRecordingStream(patient, recordingId = 1, outputFormIds) {
+  const missing = missingConfigKeys();
+  if (missing.length > 0) {
+    throw new Error(`Dragon Copilot backend isn't configured: missing ${missing.join(', ')}`);
+  }
+
+  const correlationId = newCorrelationId();
+  const context = buildContext(patient);
+
+  let controllerRef;
+  const bodyStream = new ReadableStream({
+    start(controller) {
+      controllerRef = controller;
+    },
+  });
+
+  const params = new URLSearchParams({
+    correlationId,
+    recordingId: String(recordingId),
+    externalUserId: EXTERNAL_USER_ID,
+  });
+  if (outputFormIds && outputFormIds.length) params.set('outputFormIds', outputFormIds.join(','));
+  if (context) params.set('context', JSON.stringify(context));
+
+  const resultPromise = MsftAuth.getAccessToken().then((entraUserToken) =>
+    fetch(`${DDE_BASE_URL.replace(/\/$/, '')}/api/streamRecordingLive?${params.toString()}`, {
+      method: 'POST',
+      headers: { 'x-app-secret': DDE_APP_SECRET, Authorization: `Bearer ${entraUserToken}` },
+      body: bodyStream,
+      duplex: 'half',
+    }).then(async (response) => {
+      if (!response.ok) {
+        throw new Error(`Dragon Copilot submission failed (${response.status}): ${await response.text()}`);
+      }
+      const json = await response.json();
+      return json.correlationId ?? correlationId;
+    })
+  );
+
+  return {
+    correlationId,
+    // Enqueues one chunk of raw audio bytes (a Uint8Array) to send next.
+    pushChunk(bytes) {
+      controllerRef.enqueue(bytes);
+    },
+    // Signals the recording is done — ends the HTTP request body, which
+    // tells dde-webhook to send RecordingClose once it's forwarded
+    // everything already enqueued.
+    finish() {
+      controllerRef.close();
+    },
+    // Aborts the upload outright (e.g. the recording failed partway
+    // through) rather than completing it normally.
+    abort(reason) {
+      try {
+        controllerRef.error(reason);
+      } catch {
+        // already closed/errored
+      }
+    },
+    // Resolves with the correlationId once dde-webhook confirms Dragon
+    // Copilot accepted the complete recording; rejects on any failure.
+    result: resultPromise,
+  };
+}
+
 // Uploads a finished recording to Doctor Robbie's own backend. Returns the
 // correlationId to poll for results with (see ddeClient.js). Pass an
 // existingCorrelationId to add another recording to an encounter already in
@@ -215,6 +299,7 @@ async function launchDragonCopilot({ correlationId, patient, launchType = 'copil
 export const DragonCopilotBackend = {
   missingConfigKeys,
   submitRecording,
+  startLiveRecordingStream,
   getTokenLaunchInfo,
   launchDragonCopilot,
 };
