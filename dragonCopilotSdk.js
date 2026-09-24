@@ -108,6 +108,15 @@ async function ensureInitialized() {
       authentication: { acquireAccessToken: (scope) => acquireAccessToken(dragon, scope) },
       isAmbientEnabled: true,
       isDictationEnabled: false,
+      // Confirmed 2026-09-24 from Microsoft's own "Initialize" doc:
+      // enableAll defaults to true and scans the whole page (document
+      // body, absent a containerSelector) for text fields to speech-
+      // enable -- dictation-mode behavior we don't want at all here, only
+      // the one ambient-recording button. Without this, the SDK could be
+      // silently attaching itself to Doctor Robbie's own text inputs
+      // (e.g. the note-editing boxes, patient search) regardless of
+      // isDictationEnabled: false.
+      enableAll: false,
     });
     return dragon;
   });
