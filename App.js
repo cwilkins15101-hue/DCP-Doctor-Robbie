@@ -517,10 +517,11 @@ export default function App() {
     // can cause browsers to silently block a popup opened afterward, which
     // hung indefinitely (2026-09-24 live test: no request ever reached the
     // Network tab, meaning fetch() itself never got called -- getAccessToken
-    // never resolved). startLiveRecordingStream() itself is synchronous
-    // (returns immediately with push/finish handles); only its internal
-    // token acquisition is async, so kicking it off first costs nothing.
-    const liveSession = DragonCopilotBackend.startLiveRecordingStream(
+    // never resolved). startLiveRecordingStream() is async now (2026-09-24
+    // Option B rewrite: it makes a real streamStart network call before
+    // it's safe to send audio, rather than just opening a stream
+    // controller), so it's awaited here before wiring up the microphone.
+    const liveSession = await DragonCopilotBackend.startLiveRecordingStream(
       selectedPatient,
       recordings.length + 1,
       selectedFormId ? [selectedFormId] : undefined
@@ -956,15 +957,21 @@ export default function App() {
   }
 
   // Completes a live-streamed recording (see startLiveCaptureWeb) — the
-  // audio itself has already been sent as it was captured; this just waits
-  // for dde-webhook to confirm Dragon Copilot accepted the whole thing.
-  // Mirrors submitAudioToDragon's completion handling above.
+  // audio itself has already been sent as it was captured; this waits for
+  // any still-in-flight chunk uploads, sends RecordingClose (via
+  // liveSession.finish), and waits for dde-webhook to confirm Dragon
+  // Copilot accepted the whole thing. Mirrors submitAudioToDragon's
+  // completion handling above. `duration` (seconds) is the actual recorded
+  // length, tracked by the recording timer -- the new streamFinish
+  // endpoint needs this explicitly since there's no server-side wall-clock
+  // timing across the three separate calls the way there was in a single
+  // continuous stream.
   async function finishLiveRecordingStream(liveSession) {
     setDragonError('');
     setSubmitting(true);
     setSubmitStep('Sending to Dragon Copilot…');
     try {
-      const correlationId = await liveSession.result;
+      const correlationId = await liveSession.finish(duration);
       setDragonCorrelationId(correlationId);
       setRecordings((prev) => [
         { id: `${correlationId}-${prev.length + 1}`, number: prev.length + 1, submittedAt: new Date(), durationSeconds: duration },

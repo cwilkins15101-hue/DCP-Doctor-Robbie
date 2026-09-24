@@ -61,84 +61,95 @@ function buildContext(patient) {
 // Starts a TRUE live stream to Dragon Copilot — web only for now (2026-09-24;
 // iOS/Android still use the batch submitRecording() below). Unlike
 // submitRecording(), which waits for a finished file and uploads it in one
-// shot, this opens the upload the moment recording starts and keeps it open
-// for the whole encounter: the caller pushes raw PCM audio chunks in as
-// they're captured (App.js's Web Audio API code), and this streams them to
-// dde-webhook's streamRecordingLive endpoint as a single long-lived HTTP
-// request with a live (not pre-buffered) body, which forwards each chunk to
-// Dragon Copilot's WebSocket the instant it arrives. This is the fix being
-// tried for every earlier attempt hanging with total silence despite a
-// fully protocol-correct request — the leading theory is that a real-time
-// pipeline has nothing to do with an entire recording dumped in one
-// instantaneous burst after the fact, which is what submitRecording() does
-// even though it goes out over the same real-time WebSocket transport.
+// shot, this sends audio to dde-webhook AS it's captured (App.js's Web
+// Audio API code), via three separate, ordinary HTTP requests
+// (streamStart, many streamChunk calls, streamFinish) rather than one
+// continuous streaming upload. A single long-lived streaming request body
+// was tried first and proved unreliable in practice across several live
+// tests (an HTTP/2 requirement, a CORS-labeled timeout, then a silent
+// indefinite hang — the request never even reached the server in any of
+// them) — ordinary POST requests are the same simple, already-proven
+// mechanism every other endpoint in this app uses.
 //
 // Chunks must already be raw PCM, 16-bit little-endian, 16000 Hz, mono —
 // dde-webhook declares exactly that format to Dragon Copilot and does not
 // convert anything; whatever bytes arrive are what gets sent.
-function startLiveRecordingStream(patient, recordingId = 1, outputFormIds) {
+async function startLiveRecordingStream(patient, recordingId = 1, outputFormIds) {
   const missing = missingConfigKeys();
   if (missing.length > 0) {
     throw new Error(`Dragon Copilot backend isn't configured: missing ${missing.join(', ')}`);
   }
 
+  const entraUserToken = await MsftAuth.getAccessToken();
   const correlationId = newCorrelationId();
   const context = buildContext(patient);
+  const authHeaders = { 'x-app-secret': DDE_APP_SECRET, Authorization: `Bearer ${entraUserToken}` };
+  const baseUrl = DDE_BASE_URL.replace(/\/$/, '');
 
-  let controllerRef;
-  const bodyStream = new ReadableStream({
-    start(controller) {
-      controllerRef = controller;
-    },
-  });
-
-  const params = new URLSearchParams({
+  const startParams = new URLSearchParams({
     correlationId,
     recordingId: String(recordingId),
     externalUserId: EXTERNAL_USER_ID,
   });
-  if (outputFormIds && outputFormIds.length) params.set('outputFormIds', outputFormIds.join(','));
-  if (context) params.set('context', JSON.stringify(context));
+  if (outputFormIds && outputFormIds.length) startParams.set('outputFormIds', outputFormIds.join(','));
+  if (context) startParams.set('context', JSON.stringify(context));
 
-  const resultPromise = MsftAuth.getAccessToken().then((entraUserToken) =>
-    fetch(`${DDE_BASE_URL.replace(/\/$/, '')}/api/streamRecordingLive?${params.toString()}`, {
-      method: 'POST',
-      headers: { 'x-app-secret': DDE_APP_SECRET, Authorization: `Bearer ${entraUserToken}` },
-      body: bodyStream,
-      duplex: 'half',
-    }).then(async (response) => {
+  const startResponse = await fetch(`${baseUrl}/api/streamStart?${startParams.toString()}`, {
+    method: 'POST',
+    headers: authHeaders,
+  });
+  if (!startResponse.ok) {
+    throw new Error(`Dragon Copilot submission failed (${startResponse.status}): ${await startResponse.text()}`);
+  }
+
+  // Chunk uploads are queued one-after-another (rather than fired
+  // concurrently) so they arrive at dde-webhook in the same order they
+  // were captured — the AAS WebSocket has no way to reorder out-of-order
+  // DataChunk frames. A failed chunk is logged and skipped rather than
+  // aborting the whole recording; a few dropped chunks are a real but
+  // tolerable gap for this prototype, versus losing the whole encounter.
+  let chunkQueue = Promise.resolve();
+  let ended = false;
+
+  return {
+    correlationId,
+    pushChunk(bytes) {
+      if (ended) return;
+      chunkQueue = chunkQueue
+        .then(() =>
+          fetch(`${baseUrl}/api/streamChunk?correlationId=${encodeURIComponent(correlationId)}`, {
+            method: 'POST',
+            headers: { ...authHeaders, 'Content-Type': 'application/octet-stream' },
+            body: bytes,
+          })
+        )
+        .then((response) => {
+          if (!response.ok) throw new Error(`Chunk upload failed (${response.status})`);
+        })
+        .catch((err) => {
+          console.error('Live audio chunk upload failed (continuing):', err);
+        });
+    },
+    // Waits for all in-flight chunk uploads to finish, then signals the
+    // recording is done. Resolves with the confirmed correlationId, or
+    // throws on failure.
+    async finish(recordingLengthSeconds) {
+      ended = true;
+      await chunkQueue;
+      const finishParams = new URLSearchParams({
+        correlationId,
+        recordingLengthSeconds: String(Math.max(1, recordingLengthSeconds || 1)),
+      });
+      const response = await fetch(`${baseUrl}/api/streamFinish?${finishParams.toString()}`, {
+        method: 'POST',
+        headers: authHeaders,
+      });
       if (!response.ok) {
         throw new Error(`Dragon Copilot submission failed (${response.status}): ${await response.text()}`);
       }
       const json = await response.json();
       return json.correlationId ?? correlationId;
-    })
-  );
-
-  return {
-    correlationId,
-    // Enqueues one chunk of raw audio bytes (a Uint8Array) to send next.
-    pushChunk(bytes) {
-      controllerRef.enqueue(bytes);
     },
-    // Signals the recording is done — ends the HTTP request body, which
-    // tells dde-webhook to send RecordingClose once it's forwarded
-    // everything already enqueued.
-    finish() {
-      controllerRef.close();
-    },
-    // Aborts the upload outright (e.g. the recording failed partway
-    // through) rather than completing it normally.
-    abort(reason) {
-      try {
-        controllerRef.error(reason);
-      } catch {
-        // already closed/errored
-      }
-    },
-    // Resolves with the correlationId once dde-webhook confirms Dragon
-    // Copilot accepted the complete recording; rejects on any failure.
-    result: resultPromise,
   };
 }
 
