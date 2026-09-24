@@ -121,7 +121,14 @@ async function ensureInitialized() {
 // UNCONFIRMED which of ehrData's fields are actually required -- this
 // fills in what can be confidently derived and leaves the rest out rather
 // than guess at values (e.g. a gender code) with no real data behind them.
-function buildAmbientData(correlationId, patient) {
+//
+// outputFormIds (Voice-to-Form) confirmed 2026-09-24 from Microsoft's own
+// V2F documentation: for the JavaScript SDK specifically, it's a plural
+// top-level "outputFormIds" array passed directly in setSessionData's
+// object -- a different field name/placement than every other modality
+// (REST's "formIds", the raw WebSocket's singular "outputFormIds" nested
+// differently, etc.).
+function buildAmbientData(correlationId, patient, outputFormIds) {
   const fullName = patient?.['Patient Name'] || '';
   const [firstName, ...rest] = fullName.split(' ').filter(Boolean);
   const lastName = rest.join(' ') || undefined;
@@ -134,6 +141,7 @@ function buildAmbientData(correlationId, patient) {
       encounterReportLocale: 'en-US',
       encounterUxLocale: 'en-US',
     },
+    ...(outputFormIds && outputFormIds.length ? { outputFormIds } : {}),
     ...(patient
       ? {
           ehrData: {
@@ -165,9 +173,9 @@ let currentSession = null; // { correlationId, unsubscribe() }
 // exactly the visibility into DAXCore's outcome that the raw WebSocket
 // never gave us -- surface these to the physician/log rather than
 // discarding them.
-async function startAmbientRecording({ correlationId, patient, onUploadStatusChanged }) {
+async function startAmbientRecording({ correlationId, patient, outputFormIds, onUploadStatusChanged }) {
   const dragon = await ensureInitialized();
-  await dragon.recording.ambient.setSessionData(buildAmbientData(correlationId, patient));
+  await dragon.recording.ambient.setSessionData(buildAmbientData(correlationId, patient, outputFormIds));
 
   const uploadHandler = (event) => onUploadStatusChanged?.(event?.status ?? event);
   dragon.recording.ambient.events.addEventListener('ambientRecordingUploadStatusChanged', uploadHandler);

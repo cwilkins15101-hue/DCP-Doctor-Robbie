@@ -592,18 +592,18 @@ export default function App() {
   // us. The SDK handles microphone access, encoding, and uploading
   // internally; this just starts/stops it and forwards its correlationId.
   //
-  // Voice-to-Form (the "Output" picker/selectedFormId) isn't wired up here
-  // -- ambientData's documented shape (from Microsoft's own sample app,
-  // since learn.microsoft.com isn't reachable from this environment to
-  // confirm the full field list) didn't show an obvious outputFormIds-
-  // equivalent field. Live mic recordings get the standard clinical note
-  // only for now; the "Output" picker still works for manual file uploads
-  // (see submitUploadedFileToDragon).
+  // Voice-to-Form (the "Output" picker/selectedFormId) confirmed 2026-09-24
+  // from Microsoft's own V2F documentation: for the JavaScript SDK
+  // specifically, it's a plural "outputFormIds" array passed directly in
+  // setSessionData (see dragonCopilotSdk.js) -- a different field name and
+  // placement than every other modality (REST's "formIds", the raw
+  // WebSocket's own differently-nested "outputFormIds", etc.).
   async function startLiveCaptureWeb() {
     const correlationId = DragonCopilotBackend.newCorrelationId();
     await DragonCopilotSdk.startAmbientRecording({
       correlationId,
       patient: selectedPatient,
+      outputFormIds: selectedFormId ? [selectedFormId] : undefined,
       onUploadStatusChanged: (status) => {
         console.log('[DragonCopilotSdk] ambient upload status:', status);
         // This is exactly the visibility into DAXCore's outcome the raw
