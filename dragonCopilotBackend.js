@@ -233,6 +233,51 @@ async function submitRecording(audioUri, audioName, patient, existingCorrelation
   return json.correlationId ?? correlationId;
 }
 
+// Uploads a manually-picked audio FILE only (the "Upload a file" flow) —
+// a separate, older transport from submitRecording()/startLiveRecordingStream()
+// above: a plain REST upload via dde-webhook's own app-only credentials, no
+// physician sign-in involved, same as this app used before mic recordings
+// switched to the AAS WebSocket. Restored 2026-09-24 after live testing
+// showed the WebSocket path stalling for this flow specifically, while this
+// REST path has a track record of working reliably end to end. Doesn't
+// support outputFormIds (Voice-to-Form) — that field only exists on the
+// WebSocket API — so uploaded files always get the standard clinical note.
+async function uploadRecordingFile(audioUri, audioName, patient, existingCorrelationId, recordingId = 1) {
+  const missing = missingConfigKeys();
+  if (missing.length > 0) {
+    throw new Error(`Dragon Copilot backend isn't configured: missing ${missing.join(', ')}`);
+  }
+
+  const correlationId = existingCorrelationId || newCorrelationId();
+  const formData = new FormData();
+
+  if (Platform.OS === 'web') {
+    const fileRes = await fetch(audioUri);
+    const blob = await fileRes.blob();
+    formData.append('audio', blob, audioName ?? 'recording.m4a');
+  } else {
+    formData.append('audio', { uri: audioUri, name: audioName ?? 'recording.m4a', type: 'audio/m4a' });
+  }
+
+  formData.append('correlationId', correlationId);
+  formData.append('recordingId', String(recordingId));
+  formData.append('externalUserId', EXTERNAL_USER_ID);
+  const context = buildContext(patient);
+  if (context) formData.append('context', JSON.stringify(context));
+
+  const response = await fetch(`${DDE_BASE_URL.replace(/\/$/, '')}/api/submitRecordingFile`, {
+    method: 'POST',
+    headers: { 'x-app-secret': DDE_APP_SECRET },
+    body: formData,
+  });
+
+  if (!response.ok) {
+    throw new Error(`Dragon Copilot submission failed (${response.status}): ${await response.text()}`);
+  }
+  const json = await response.json();
+  return json.correlationId ?? correlationId;
+}
+
 // Fetches the Microsoft-assigned partner/org/product/EHR identifiers
 // needed to launch Dragon Copilot's own web UI via its Token Launch API —
 // these live only in the dde-webhook server's own .env, not the app's. The
@@ -310,6 +355,7 @@ async function launchDragonCopilot({ correlationId, patient, launchType = 'copil
 export const DragonCopilotBackend = {
   missingConfigKeys,
   submitRecording,
+  uploadRecordingFile,
   startLiveRecordingStream,
   getTokenLaunchInfo,
   launchDragonCopilot,

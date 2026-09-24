@@ -987,10 +987,46 @@ export default function App() {
     }
   }
 
+  // Upload-file flow only (the manual submit button below) — a separate,
+  // older REST transport from submitAudioToDragon (which mic recordings use,
+  // over the AAS WebSocket), kept as its own function so mic recordings are
+  // untouched. Restored 2026-09-24 after live testing showed the WebSocket
+  // path stalling for manually-uploaded files specifically, while this REST
+  // path has a track record of working reliably end to end. Doesn't support
+  // Voice-to-Form (outputFormIds) — that's WebSocket-only — so an uploaded
+  // file always gets the standard clinical note regardless of the "Output"
+  // picker's selection.
+  async function submitUploadedFileToDragon(uri, name) {
+    setDragonError('');
+    setSubmitting(true);
+    setSubmitStep('Sending to Dragon Copilot…');
+    try {
+      const correlationId = await DragonCopilotBackend.uploadRecordingFile(
+        uri,
+        name,
+        selectedPatient,
+        dragonCorrelationId,
+        recordings.length + 1
+      );
+      setDragonCorrelationId(correlationId);
+      setRecordings((prev) => [
+        { id: `${correlationId}-${prev.length + 1}`, number: prev.length + 1, submittedAt: new Date(), durationSeconds: duration },
+        ...prev,
+      ]);
+      setLastSubmittedAt(new Date());
+      setPollGeneration((g) => g + 1);
+    } catch (err) {
+      notify('Dragon Copilot submission failed', String(err?.message ?? err));
+    } finally {
+      setSubmitting(false);
+      setSubmitStep('');
+    }
+  }
+
   // Upload-file flow's manual submit button — mic recordings auto-submit
   // instead (see stopRecording) and go straight to a "View Note" button.
   async function handleDragonSubmitRecording() {
-    await submitAudioToDragon(audioUri, audioName);
+    await submitUploadedFileToDragon(audioUri, audioName);
     setScreen('dragonNote');
   }
 

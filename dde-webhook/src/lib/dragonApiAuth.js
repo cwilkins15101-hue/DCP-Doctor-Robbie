@@ -62,12 +62,23 @@ async function getDragonApiToken() {
   return token.token;
 }
 
-// No app-only token getter for the AAS WebSocket (used to be getAasToken(),
-// removed) or for Token Launch here — both confirmed live to reject/ignore
-// an app-only client-credentials token (Token Launch: a flat 401; AAS
-// WebSocket: silent, indefinite non-response — see audioStreamUpload.js).
-// Both need a delegated token for an actual signed-in physician, which only
-// the app itself can obtain (see msftAuth.js) and forwards through its own
-// request — this server never holds a physician's credentials itself.
+// Gets a bearer token for the Ambient Audio Streaming (AAS) REST endpoints
+// (audioUpload.js's storeChunk/finalizeUpload) — a different audience than
+// the Partner API above, confirmed from Microsoft's AAS 2.0 reference docs.
+// Restored 2026-09-24 for the manual "Upload a file" flow only: unlike the
+// AAS *WebSocket* (see below), the REST endpoints have historically worked
+// fine with this app-only token, no physician sign-in required.
+async function getAasToken() {
+  const token = await getCredential().getToken(config.aasScope());
+  return token.token;
+}
 
-module.exports = { getDragonApiToken, describeTokenForAllowList };
+// No app-only token getter for the AAS WebSocket or for Token Launch here —
+// both confirmed live to reject/ignore an app-only client-credentials token
+// (Token Launch: a flat 401; AAS WebSocket: silent, indefinite non-response
+// — see audioStreamUpload.js). Both need a delegated token for an actual
+// signed-in physician, which only the app itself can obtain (see
+// msftAuth.js) and forwards through its own request — this server never
+// holds a physician's credentials itself.
+
+module.exports = { getDragonApiToken, getAasToken, describeTokenForAllowList };
