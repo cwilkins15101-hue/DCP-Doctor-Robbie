@@ -1,0 +1,61 @@
+name: Deploy web app to Azure Static Web Apps
+
+# Deploys the Expo web export (dist/) to Azure Static Web Apps. This builds
+# the app itself (npx expo export) rather than letting Azure's own Oryx
+# builder try to detect the framework -- Expo/React Native Web isn't one of
+# its presets -- then hands the already-built dist/ folder to the deploy
+# action with skip_app_build so it doesn't attempt to build it again.
+#
+# One-time setup still needed (see the conversation this was added in):
+#   1. Create the Static Web App resource in the Azure Portal (Free tier is
+#      fine) WITHOUT linking it to GitHub during creation -- that flow tries
+#      to auto-detect a framework and auto-generate its own workflow file,
+#      which would conflict with this one. Grab its "Deployment token"
+#      afterward from the resource's Overview page.
+#   2. Add these as GitHub repo secrets (Settings -> Secrets and variables ->
+#      Actions): AZURE_STATIC_WEB_APPS_API_TOKEN (the deployment token from
+#      step 1), plus every EXPO_PUBLIC_* value from .env.example (baked into
+#      the build at build time, same as running locally).
+#   3. After the first successful deploy, add the new static site's URL to:
+#      the dr-robbie Function App's CORS allowed origins, the Entra app
+#      registration's Single-page application redirect URIs, and the Epic
+#      sandbox app's Endpoint URI.
+on:
+  push:
+    branches:
+      - main
+      - add-pipeline-toggle
+  workflow_dispatch: {}
+
+jobs:
+  build_and_deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - run: npm ci
+
+      - name: Build web export
+        run: npx expo export --platform web
+        env:
+          EXPO_PUBLIC_MSFT_TENANT_ID: ${{ secrets.EXPO_PUBLIC_MSFT_TENANT_ID }}
+          EXPO_PUBLIC_MSFT_CLIENT_ID: ${{ secrets.EXPO_PUBLIC_MSFT_CLIENT_ID }}
+          EXPO_PUBLIC_DDE_SERVER_URL: ${{ secrets.EXPO_PUBLIC_DDE_SERVER_URL }}
+          EXPO_PUBLIC_DDE_APP_SECRET: ${{ secrets.EXPO_PUBLIC_DDE_APP_SECRET }}
+          EXPO_PUBLIC_DRAGON_EXTERNAL_USER_ID: ${{ secrets.EXPO_PUBLIC_DRAGON_EXTERNAL_USER_ID }}
+          EXPO_PUBLIC_EPIC_CLIENT_ID: ${{ secrets.EXPO_PUBLIC_EPIC_CLIENT_ID }}
+          EXPO_PUBLIC_EPIC_SANDBOX_URL: ${{ secrets.EXPO_PUBLIC_EPIC_SANDBOX_URL }}
+          EXPO_PUBLIC_EPIC_SCOPES: ${{ secrets.EXPO_PUBLIC_EPIC_SCOPES }}
+
+      - name: Deploy to Azure Static Web Apps
+        uses: Azure/static-web-apps-deploy@v1
+        with:
+          azure_static_web_apps_api_token: ${{ secrets.AZURE_STATIC_WEB_APPS_API_TOKEN }}
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          action: upload
+          app_location: 'dist'
+          skip_app_build: true

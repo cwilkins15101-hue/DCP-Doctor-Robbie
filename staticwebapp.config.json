@@ -1,0 +1,6 @@
+{
+  "navigationFallback": {
+    "rewrite": "/index.html",
+    "exclude": ["/_expo/static/*", "/assets/*", "/favicon.ico", "/metadata.json"]
+  }
+}
