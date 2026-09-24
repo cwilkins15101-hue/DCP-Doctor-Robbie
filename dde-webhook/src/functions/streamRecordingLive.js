@@ -71,8 +71,12 @@ async function handler(request, context) {
     }
   }
 
+  const startedAt = Date.now();
+  context.log(`[streamRecordingLive] Invocation started (correlationId=${correlationId})`);
+
   try {
     await ambientSession.createAmbientSession({ correlationId, externalUserId, data: sessionData, ehrInstanceId });
+    context.log(`[streamRecordingLive] createAmbientSession done (+${Date.now() - startedAt}ms)`);
     await audioStreamUpload.streamRecordingLive({
       correlationId,
       incomingChunks: request.body,
@@ -85,8 +89,9 @@ async function handler(request, context) {
       // the exact crash this avoids.
       log: context.log.bind(context),
     });
+    context.log(`[streamRecordingLive] streamRecordingLive() resolved (+${Date.now() - startedAt}ms)`);
   } catch (err) {
-    context.error(`streamRecordingLive failed for correlationId ${correlationId}:`, err);
+    context.error(`streamRecordingLive failed for correlationId ${correlationId} (+${Date.now() - startedAt}ms):`, err);
     return withCors({ status: 502, jsonBody: { error: String(err?.message ?? err) } });
   }
 
