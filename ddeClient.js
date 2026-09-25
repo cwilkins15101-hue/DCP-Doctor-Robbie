@@ -49,4 +49,42 @@ async function pollForResult(correlationId, { intervalMs = 5000, timeoutMs = 5 *
   throw new Error('Timed out waiting for Dragon Copilot to finish processing.');
 }
 
-export const DdeClient = { missingConfigKeys, fetchResult, pollForResult };
+// Indexes a new (or continuing) encounter for cross-device history
+// (2026-09-25) -- fire-and-forget from the caller's point of view (App.js
+// doesn't block on this or treat its failure as fatal, since the actual
+// recording/submission has already succeeded or is already in flight by
+// the time this is called).
+async function recordEncounter({ correlationId, externalUserId, patient }) {
+  const missing = missingConfigKeys();
+  if (missing.length > 0) {
+    throw new Error(`DDE server isn't configured: missing ${missing.join(', ')}`);
+  }
+  const response = await fetch(`${DDE_BASE_URL.replace(/\/$/, '')}/api/recordEncounter`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'x-app-secret': DDE_APP_SECRET },
+    body: JSON.stringify({ correlationId, externalUserId, patient }),
+  });
+  if (!response.ok) {
+    throw new Error(`DDE server error ${response.status}: ${await response.text()}`);
+  }
+  return response.json();
+}
+
+// Lists this physician's recent encounters (most recent first) for
+// cross-device history -- e.g. one started on a phone, viewed later from
+// a desktop browser signed in as the same physician.
+async function listEncounters(externalUserId) {
+  const missing = missingConfigKeys();
+  if (missing.length > 0) {
+    throw new Error(`DDE server isn't configured: missing ${missing.join(', ')}`);
+  }
+  const url = `${DDE_BASE_URL.replace(/\/$/, '')}/api/listEncounters?externalUserId=${encodeURIComponent(externalUserId)}`;
+  const response = await fetch(url, { headers: { 'x-app-secret': DDE_APP_SECRET } });
+  if (!response.ok) {
+    throw new Error(`DDE server error ${response.status}: ${await response.text()}`);
+  }
+  const json = await response.json();
+  return json.encounters ?? [];
+}
+
+export const DdeClient = { missingConfigKeys, fetchResult, pollForResult, recordEncounter, listEncounters };

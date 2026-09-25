@@ -113,6 +113,9 @@ module.exports = {
   storageConnectionString: () =>
     process.env.DDE_STORAGE_CONNECTION_STRING || required('AzureWebJobsStorage'),
   resultsTableName: () => process.env.DDE_RESULTS_TABLE || 'ddeResults',
+  // Cross-device encounter index (2026-09-25, see storage.js) — separate
+  // table from the results above, partitioned by physician instead.
+  encountersTableName: () => process.env.DDE_ENCOUNTERS_TABLE || 'ddeEncounters',
 
   // Only notifications with one of these types are processed; everything
   // else is acknowledged (200) but ignored. Per Microsoft's "Notification
