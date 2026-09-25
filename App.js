@@ -600,7 +600,15 @@ export default function App() {
   // placement than every other modality (REST's "formIds", the raw
   // WebSocket's own differently-nested "outputFormIds", etc.).
   async function startLiveCaptureWeb() {
-    const correlationId = DragonCopilotBackend.newCorrelationId();
+    // Reuses dragonCorrelationId when adding another recording to an
+    // encounter already in progress (only generates a fresh one for a
+    // brand-new encounter) -- matches submitRecording()/uploadRecordingFile()
+    // in dragonCopilotBackend.js. Found missing here 2026-09-25: without
+    // this, every recording (even a second one on the same encounter) got
+    // its own unrelated correlationId, so Dragon Copilot had no way to
+    // know they belonged together -- explains multiple recordings never
+    // producing an updated, combined transcript/note.
+    const correlationId = dragonCorrelationId || DragonCopilotBackend.newCorrelationId();
     await DragonCopilotSdk.startAmbientRecording({
       correlationId,
       patient: selectedPatient,
