@@ -304,23 +304,31 @@ async function getTokenLaunchInfo() {
   return response.json();
 }
 
-// Opens Dragon Copilot's own web UI in a new browser tab, seeded with this
-// encounter's correlationId and (if available) the Epic patient's context,
-// per Microsoft's Token Launch API. That API's own docs say a real REST
-// client (fetch/Postman/etc.) isn't recommended — it works via the
-// POST-REDIRECT-GET pattern, so the browser itself needs to submit the
-// form and follow the resulting redirect to actually show the page. A
-// fetch() call would just receive the redirect response as inert data
-// instead of navigating anywhere. That's also why this only works on the
-// web build — there's no such form-submission mechanism natively.
+// Opens Dragon Copilot's own web UI in a separate browser WINDOW (not a
+// tab), seeded with this encounter's correlationId and (if available) the
+// Epic patient's context, per Microsoft's Token Launch API. That API's own
+// docs say a real REST client (fetch/Postman/etc.) isn't recommended — it
+// works via the POST-REDIRECT-GET pattern, so the browser itself needs to
+// submit the form and follow the resulting redirect to actually show the
+// page. A fetch() call would just receive the redirect response as inert
+// data instead of navigating anywhere. That's also why this only works on
+// the web build — there's no such form-submission mechanism natively.
 //
 // An embedded-iframe version was tried and could display Dragon Copilot's
 // UI, but Dragon Copilot's own app redirects to a full separate window
 // anyway once it detects no "native mic access" (a local desktop app +
 // browser extension Dragon Copilot itself requires for in-browser
-// dictation — unrelated to anything configurable here), so a real new-tab
-// launch gives the same practical result with far less complexity.
-async function launchDragonCopilot({ correlationId, patient, launchType = 'copilot' }) {
+// dictation — unrelated to anything configurable here), so a real
+// separate-window launch gives the same practical result with far less
+// complexity.
+//
+// windowName must already be an OPEN window (see App.js's
+// handleLaunchDragonCopilot, which opens it synchronously from the button's
+// own click handler, sized to match Doctor Robbie's window) — targeting a
+// form at a name that isn't already open would just behave like "_blank"
+// again (a new tab, sized by the browser's own default), since form
+// submission itself can't request window dimensions.
+async function launchDragonCopilot({ correlationId, patient, launchType = 'copilot', windowName = '_blank' }) {
   if (Platform.OS !== 'web') {
     throw new Error('Launching Dragon Copilot this way only works in the web app for now.');
   }
@@ -344,7 +352,7 @@ async function launchDragonCopilot({ correlationId, patient, launchType = 'copil
   const form = document.createElement('form');
   form.method = 'POST';
   form.action = `${info.ehrBaseUrl.replace(/\/$/, '')}/api/${encodeURIComponent(info.ehr)}/token-launch`;
-  form.target = '_blank';
+  form.target = windowName;
 
   const input = document.createElement('input');
   input.type = 'hidden';

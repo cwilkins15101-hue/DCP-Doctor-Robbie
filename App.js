@@ -192,35 +192,11 @@ function findArtifact(artifacts, keyword, excludeKeyword) {
 // after closing or reloading the app — not a full browsable history,
 // just "show me the last one" (2026-09-24). Native platforms don't get
 // this (out of scope, same as the live-streaming work elsewhere in this
-// file) — localStorage is browser-only anyway. Wrapped defensively since
-// a private/incognito window can throw on access rather than just
-// returning null.
-const LAST_ENCOUNTER_STORAGE_KEY = 'doctorRobbie.lastEncounter';
-
 // Same env var/default dragonCopilotBackend.js and dragonCopilotSdk.js
 // already independently declare — needed here too to key the cross-device
 // encounter history (recordEncounter/listEncounters, 2026-09-25) by the
 // same physician identity those already use.
 const EXTERNAL_USER_ID = process.env.EXPO_PUBLIC_DRAGON_EXTERNAL_USER_ID || 'doctor-robbie-physician';
-
-function saveLastEncounter(entry) {
-  if (Platform.OS !== 'web') return;
-  try {
-    window.localStorage.setItem(LAST_ENCOUNTER_STORAGE_KEY, JSON.stringify(entry));
-  } catch {
-    // best-effort only
-  }
-}
-
-function loadLastEncounter() {
-  if (Platform.OS !== 'web') return null;
-  try {
-    const raw = window.localStorage.getItem(LAST_ENCOUNTER_STORAGE_KEY);
-    return raw ? JSON.parse(raw) : null;
-  } catch {
-    return null;
-  }
-}
 
 // React Native's Alert.alert doesn't reliably show anything on the web
 // build (Alert has no real web implementation) — every plain title+message
@@ -347,10 +323,14 @@ export default function App() {
   // encounter started on a different device, signed in as the same
   // physician (see recordEncounter/listEncounters, ddeClient.js). Loaded
   // on demand when the History modal opens, not kept live/polled.
-  const [historyModalVisible, setHistoryModalVisible] = useState(false);
-  const [encounterHistory, setEncounterHistory] = useState([]);
-  const [loadingHistory, setLoadingHistory] = useState(false);
-  const [historyError, setHistoryError] = useState('');
+  const [patientSessionsVisible, setPatientSessionsVisible] = useState(false);
+  const [patientSessions, setPatientSessions] = useState([]);
+  const [loadingPatientSessions, setLoadingPatientSessions] = useState(false);
+  const [patientSessionsError, setPatientSessionsError] = useState('');
+  // Left-side slide-in panel — same treatment as the Dragon Copilot Summary
+  // panel below (opposite edge from the Epic panels).
+  const patientSessionsPanelAnim = useRef(new Animated.Value(0)).current;
+  const [patientSessionsPanelRendered, setPatientSessionsPanelRendered] = useState(false);
 
   // Dragon Copilot — backend submission state (the recording is uploaded
   // straight to Doctor Robbie's own server, which calls Dragon Copilot on
@@ -359,12 +339,6 @@ export default function App() {
   const [dragonCorrelationId, setDragonCorrelationId] = useState(null);
   const [dragonDdeChecking, setDragonDdeChecking] = useState(false);
   const [dragonDdeResult, setDragonDdeResult] = useState(null);
-  // The last encounter submitted in a previous app session (web only,
-  // localStorage — see saveLastEncounter/loadLastEncounter above). Lets a
-  // physician get back to it after closing/reloading, via the "View Last
-  // Note" button on the record screen — read once on mount, refreshed
-  // whenever a new encounter's correlationId is set.
-  const [lastEncounter, setLastEncounter] = useState(null);
   const [noteTab, setNoteTab] = useState('note');
   // Physician edits to the note's sections, keyed by section id — seeded
   // from the parsed note whenever the server actually delivers new content
@@ -480,28 +454,31 @@ export default function App() {
   }, [dragonSummaryVisible]);
 
   useEffect(() => {
+    if (patientSessionsVisible) {
+      setPatientSessionsPanelRendered(true);
+      Animated.timing(patientSessionsPanelAnim, { toValue: 1, duration: 260, useNativeDriver: true }).start();
+    } else if (patientSessionsPanelRendered) {
+      Animated.timing(patientSessionsPanelAnim, { toValue: 0, duration: 200, useNativeDriver: true }).start(() => {
+        setPatientSessionsPanelRendered(false);
+      });
+    }
+  }, [patientSessionsVisible]);
+
+  useEffect(() => {
     (async () => {
       const { granted } = await Audio.requestPermissionsAsync();
       setPermissionGranted(granted);
     })();
   }, []);
 
-  useEffect(() => {
-    setLastEncounter(loadLastEncounter());
-  }, []);
-
-  // Persists every new encounter as "the last one" (overwriting whatever
-  // was there before) — only fires when correlationId actually changes to
-  // a new value, i.e. once per fresh encounter, not on every additional
-  // recording added to one already in progress.
+  // Indexes every new encounter server-side for cross-device history
+  // (2026-09-25) — only fires when correlationId actually changes to a new
+  // value, i.e. once per fresh encounter, not on every additional recording
+  // added to one already in progress. Best-effort: a failure here doesn't
+  // affect the recording itself, which has already succeeded or is already
+  // in flight by this point.
   useEffect(() => {
     if (!dragonCorrelationId) return;
-    const entry = { correlationId: dragonCorrelationId, patient: selectedPatient, submittedAt: new Date().toISOString() };
-    saveLastEncounter(entry);
-    setLastEncounter(entry);
-    // Also indexes it server-side for cross-device history (2026-09-25) —
-    // best-effort: a failure here doesn't affect the recording itself,
-    // which has already succeeded or is already in flight by this point.
     DdeClient.recordEncounter({ correlationId: dragonCorrelationId, externalUserId: EXTERNAL_USER_ID, patient: selectedPatient }).catch(
       (err) => console.error('recordEncounter failed (non-fatal):', err)
     );
@@ -986,14 +963,30 @@ export default function App() {
   // real new-tab launch gives the same result with less complexity.
   async function handleLaunchDragonCopilot() {
     if (!dragonCorrelationId) return;
+    // Opens the destination window synchronously, before any awaits below —
+    // browsers only allow a script to open a real (non-tab) window sized by
+    // its features string when that call happens directly inside a click
+    // handler's own call stack; doing it after an await gets treated as an
+    // unrequested pop-up and blocked. Sized to match Doctor Robbie's own
+    // window rather than the browser's default new-window size.
+    const launchWindow = Platform.OS === 'web'
+      ? window.open(
+          '',
+          'dragonCopilotLaunch',
+          `width=${window.outerWidth},height=${window.outerHeight},left=${window.screenX},top=${window.screenY}`
+        )
+      : null;
     setLaunchingDragonCopilot(true);
     try {
       await DragonCopilotBackend.launchDragonCopilot({
         correlationId: dragonCorrelationId,
         patient: selectedPatient,
         launchType: 'copilot',
+        windowName: 'dragonCopilotLaunch',
       });
+      launchWindow?.focus();
     } catch (err) {
+      launchWindow?.close();
       notify('Could not launch Dragon Copilot', String(err?.message ?? err));
     } finally {
       setLaunchingDragonCopilot(false);
@@ -1153,8 +1146,8 @@ export default function App() {
     }
   }
 
-  // Jumps straight to a given encounter (from lastEncounter or the
-  // cross-device history list below) and fetches its current note/
+  // Jumps straight to a given encounter (from the Patient Sessions list
+  // below) and fetches its current note/
   // transcript/form output right away, rather than waiting for the usual
   // 5-second poll tick. Fetches using the passed-in correlationId directly
   // instead of relying on dragonCorrelationId from state, since
@@ -1182,34 +1175,31 @@ export default function App() {
     }
   }
 
-  function handleResumeLastEncounter() {
-    if (!lastEncounter) return;
-    handleResumeEncounter(lastEncounter.correlationId, lastEncounter.patient);
-  }
-
   // Loads this physician's cross-device encounter history on demand (see
   // recordEncounter/listEncounters, ddeClient.js) — not kept live/polled,
-  // just refreshed each time the History modal opens.
-  async function loadEncounterHistory() {
-    setHistoryError('');
-    setLoadingHistory(true);
+  // just refreshed each time the Patient Sessions panel opens.
+  async function loadPatientSessions() {
+    setPatientSessionsError('');
+    setLoadingPatientSessions(true);
     try {
       const encounters = await DdeClient.listEncounters(EXTERNAL_USER_ID);
-      setEncounterHistory(encounters);
+      setPatientSessions(encounters);
     } catch (err) {
-      setHistoryError(String(err?.message ?? err));
+      setPatientSessionsError(String(err?.message ?? err));
     } finally {
-      setLoadingHistory(false);
+      setLoadingPatientSessions(false);
     }
   }
 
-  function handleOpenHistory() {
-    setHistoryModalVisible(true);
-    loadEncounterHistory();
+  function handleOpenPatientSessions() {
+    setPatientSessionsVisible(true);
+    loadPatientSessions();
   }
 
-  function handleSelectHistoryEncounter(encounter) {
-    setHistoryModalVisible(false);
+  // Slides the panel off screen, then swaps the existing Dragon Copilot
+  // window over to the selected session's note/transcript/form output.
+  function handleSelectPatientSession(encounter) {
+    setPatientSessionsVisible(false);
     handleResumeEncounter(encounter.correlationId, encounter.patient);
   }
 
@@ -1277,58 +1267,88 @@ export default function App() {
     );
   }
 
-  // Cross-device encounter history (2026-09-25) — lists this physician's
-  // recent encounters from the server (recordEncounter/listEncounters),
-  // so one started on a different device shows up here too. Tapping a row
-  // jumps straight to it the same way "View Last Note" does.
-  function renderHistoryModal() {
+  // Cross-device Patient Sessions panel (2026-09-25) — lists this
+  // physician's recent encounters from the server (recordEncounter/
+  // listEncounters), so one started on a different device shows up here
+  // too. A left-side slide-in panel, same treatment as the Dragon Copilot
+  // Summary panel below (opposite edge from the Epic panels). Tapping a
+  // row slides the panel off screen and swaps the existing Dragon Copilot
+  // window over to that session (handleSelectPatientSession).
+  function renderPatientSessionsPanel() {
     return (
       <Modal
-        visible={historyModalVisible}
-        animationType="slide"
-        presentationStyle="pageSheet"
-        onRequestClose={() => setHistoryModalVisible(false)}
+        visible={patientSessionsPanelRendered}
+        transparent
+        animationType="none"
+        onRequestClose={() => setPatientSessionsVisible(false)}
       >
-        <SafeAreaView style={styles.modalSafeArea}>
-          <View style={styles.modalHeader}>
-            <Text style={styles.modalTitle}>History</Text>
-            <TouchableOpacity onPress={() => setHistoryModalVisible(false)}>
-              <Text style={styles.modalClose}>Close</Text>
-            </TouchableOpacity>
-          </View>
-          {loadingHistory ? (
-            <View style={styles.historyLoading}>
-              <ActivityIndicator color={C.blue} size="small" />
-            </View>
-          ) : historyError ? (
-            <Text style={styles.dragonErrorText}>{historyError}</Text>
-          ) : (
-            <FlatList
-              data={encounterHistory}
-              keyExtractor={(item) => item.correlationId}
-              contentContainerStyle={styles.patientList}
-              ItemSeparatorComponent={() => <View style={styles.listSeparator} />}
-              ListEmptyComponent={() => (
-                <Text style={styles.dragonBodyText}>No encounters yet — they'll show up here once you start recording.</Text>
-              )}
-              renderItem={({ item }) => (
-                <TouchableOpacity style={styles.patientRow} onPress={() => handleSelectHistoryEncounter(item)}>
-                  <Text style={styles.patientRowName}>
-                    {item.patient ? patientDisplayName(item.patient) : 'Encounter'}
-                  </Text>
-                  <Text style={styles.patientRowDetail}>
-                    {new Date(item.startedAt).toLocaleDateString()} · {formatClockTime(new Date(item.startedAt))}
-                  </Text>
+        <View style={styles.chartOverlay}>
+          <Animated.View
+            style={[
+              styles.chartPanel,
+              {
+                width: panelWidth,
+                transform: [
+                  {
+                    translateX: patientSessionsPanelAnim.interpolate({
+                      inputRange: [0, 1],
+                      outputRange: [-panelWidth, 0],
+                    }),
+                  },
+                ],
+              },
+            ]}
+          >
+            <SafeAreaView style={styles.chartPanelSafeArea}>
+              <View style={styles.chartPanelHeader}>
+                <View style={styles.chartPanelHeaderLeft}>
+                  <Text style={styles.chartPanelTitle}>Patient Sessions</Text>
+                </View>
+                <TouchableOpacity onPress={() => setPatientSessionsVisible(false)}>
+                  <Text style={styles.modalClose}>Done</Text>
                 </TouchableOpacity>
+              </View>
+
+              {loadingPatientSessions ? (
+                <View style={styles.historyLoading}>
+                  <ActivityIndicator color={C.blue} size="small" />
+                </View>
+              ) : patientSessionsError ? (
+                <Text style={styles.chartErrorText}>{patientSessionsError}</Text>
+              ) : (
+                <FlatList
+                  data={patientSessions}
+                  keyExtractor={(item) => item.correlationId}
+                  contentContainerStyle={styles.patientList}
+                  ItemSeparatorComponent={() => <View style={styles.listSeparator} />}
+                  ListEmptyComponent={() => (
+                    <Text style={styles.dragonBodyText}>No encounters yet — they'll show up here once you start recording.</Text>
+                  )}
+                  renderItem={({ item }) => (
+                    <TouchableOpacity style={styles.patientRow} onPress={() => handleSelectPatientSession(item)}>
+                      <Text style={styles.patientRowName}>
+                        {item.patient ? patientDisplayName(item.patient) : 'Encounter'}
+                      </Text>
+                      <Text style={styles.patientRowDetail}>
+                        {new Date(item.startedAt).toLocaleDateString()} · {formatClockTime(new Date(item.startedAt))}
+                      </Text>
+                    </TouchableOpacity>
+                  )}
+                />
               )}
-            />
-          )}
-          <View style={styles.modalFooter}>
-            <TouchableOpacity style={styles.reloadButton} onPress={loadEncounterHistory}>
-              <Text style={styles.reloadButtonText}>Refresh</Text>
-            </TouchableOpacity>
-          </View>
-        </SafeAreaView>
+              <View style={styles.modalFooter}>
+                <TouchableOpacity style={styles.reloadButton} onPress={loadPatientSessions}>
+                  <Text style={styles.reloadButtonText}>Refresh</Text>
+                </TouchableOpacity>
+              </View>
+            </SafeAreaView>
+          </Animated.View>
+          <TouchableOpacity
+            style={styles.chartBackdrop}
+            activeOpacity={1}
+            onPress={() => setPatientSessionsVisible(false)}
+          />
+        </View>
       </Modal>
     );
   }
@@ -1743,26 +1763,12 @@ export default function App() {
             <Text style={styles.viewResultsButtonText}>‹ View Dragon Copilot Results</Text>
           </TouchableOpacity>
         )}
-        {/* Only shown before starting a new encounter this session — once
-            dragonCorrelationId is set (a new recording started, or this
-            was just tapped), the button above takes over. */}
-        {!dragonCorrelationId && lastEncounter && (
-          <TouchableOpacity
-            style={styles.viewResultsButton}
-            onPress={handleResumeLastEncounter}
-            activeOpacity={0.85}
-          >
-            <Text style={styles.viewResultsButtonText}>
-              ‹ View Last Note{lastEncounter.patient ? ` (${patientDisplayName(lastEncounter.patient)})` : ''}
-            </Text>
-          </TouchableOpacity>
-        )}
         <Text style={styles.title}>Doctor Robbie</Text>
         <Text style={styles.subtitle}>
           {dragonCorrelationId ? 'Recording #' + (recordings.length + 1) + ' for this encounter' : 'Patient Encounter Recording'}
         </Text>
-        <TouchableOpacity style={styles.debugLink} onPress={handleOpenHistory}>
-          <Text style={styles.debugLinkText}>History</Text>
+        <TouchableOpacity style={styles.viewResultsButton} onPress={handleOpenPatientSessions} activeOpacity={0.85}>
+          <Text style={styles.viewResultsButtonText}>Patient Sessions</Text>
         </TouchableOpacity>
         <TouchableOpacity style={styles.debugLink} onPress={() => setLogModalVisible(true)}>
           <Text style={styles.debugLinkText}>View Log</Text>
@@ -1933,7 +1939,7 @@ export default function App() {
       </View>
 
       {renderDebugLogModal()}
-      {renderHistoryModal()}
+      {renderPatientSessionsPanel()}
 
       {/* Patient list panel — same right-side slide-in treatment as the
           Epic Chart Summary panel, with a header that reflects whichever
