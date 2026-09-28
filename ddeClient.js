@@ -87,4 +87,24 @@ async function listEncounters(externalUserId) {
   return json.encounters ?? [];
 }
 
-export const DdeClient = { missingConfigKeys, fetchResult, pollForResult, recordEncounter, listEncounters };
+// Fills the FQHC Sliding Fee Scale spreadsheet template with a completed
+// FQHC Intake form's values (see App.js's "Export" button on the Form
+// Output tab) and returns the resulting .xlsx as a Blob, ready to hand to
+// the browser as a download.
+async function exportFqhcForm(fields) {
+  const missing = missingConfigKeys();
+  if (missing.length > 0) {
+    throw new Error(`DDE server isn't configured: missing ${missing.join(', ')}`);
+  }
+  const response = await fetch(`${DDE_BASE_URL.replace(/\/$/, '')}/api/exportFqhcForm`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'x-app-secret': DDE_APP_SECRET },
+    body: JSON.stringify({ fields }),
+  });
+  if (!response.ok) {
+    throw new Error(`DDE server error ${response.status}: ${await response.text()}`);
+  }
+  return response.blob();
+}
+
+export const DdeClient = { missingConfigKeys, fetchResult, pollForResult, recordEncounter, listEncounters, exportFqhcForm };

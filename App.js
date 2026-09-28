@@ -187,6 +187,63 @@ function findArtifact(artifacts, keyword, excludeKeyword) {
   );
 }
 
+// The exact 22 section titles Dragon Copilot returns for the FQHC Intake
+// Voice-to-Form output — confirmed live 2026-09-28 from a real test
+// recording, per the physician's own field list. Used both to recognize
+// when the Form Output tab is showing this particular form (so the Export
+// button only appears then) and to build the flat field map
+// dde-webhook's exportFqhcForm endpoint expects.
+const FQHC_FORM_FIELD_TITLES = [
+  'Phone Number', 'First Name', 'Last Name', 'Middle Initial', 'Street Address', 'Apt. #',
+  'City', 'State', 'Zip Code', 'Home Phone', 'Cell Phone', 'Date of Birth', 'Marital Status',
+  'Family Size', 'Spouse/Partner Employed', 'Other Household Members Employed',
+  'Covered/Eligible for Health Insurance', 'Policy Holder', 'Policy Number', 'Insurer',
+  'Employed', 'Former Spouse/Partner Financially Responsible',
+];
+
+// Fields the export sends straight through, one FQHC Intake section per
+// spreadsheet cell — everything in FQHC_FORM_FIELD_TITLES except the name
+// and address parts, which get combined below (per the physician's own
+// spec, 2026-09-28) since the spreadsheet only has one Full Legal Name
+// cell and one Physical Address cell, not five- and three-way splits.
+const FQHC_DIRECT_EXPORT_FIELDS = FQHC_FORM_FIELD_TITLES.filter(
+  (title) => !['First Name', 'Last Name', 'Middle Initial', 'Street Address', 'Apt. #', 'City', 'State', 'Zip Code'].includes(title)
+);
+
+// Builds the { 'Field Name': 'value' } map the exportFqhcForm endpoint
+// expects, from the Form Output tab's parsed sections — sections is
+// parseDragonNote(formOutputResult).sections, edits is editedNoteSections
+// (so a physician's in-app corrections are exported too, not just what
+// Dragon Copilot originally returned).
+function buildFqhcExportFields(sections, edits) {
+  const valueByTitle = {};
+  for (const section of sections) {
+    const value = (edits[section.id] ?? section.content ?? '').trim();
+    if (value) valueByTitle[section.title.trim()] = value;
+  }
+
+  const fields = {};
+  for (const title of FQHC_DIRECT_EXPORT_FIELDS) {
+    if (valueByTitle[title]) fields[title] = valueByTitle[title];
+  }
+
+  const fullName = [valueByTitle['First Name'], valueByTitle['Middle Initial'], valueByTitle['Last Name']]
+    .filter(Boolean)
+    .join(' ');
+  if (fullName) fields['Full Legal Name'] = fullName;
+
+  const streetLine = [valueByTitle['Street Address'], valueByTitle['Apt. #'] && `Apt ${valueByTitle['Apt. #']}`]
+    .filter(Boolean)
+    .join(', ');
+  const cityStateZip = [valueByTitle['City'], [valueByTitle['State'], valueByTitle['Zip Code']].filter(Boolean).join(' ')]
+    .filter(Boolean)
+    .join(', ');
+  const physicalAddress = [streetLine, cityStateZip].filter(Boolean).join(', ');
+  if (physicalAddress) fields['Physical Address'] = physicalAddress;
+
+  return fields;
+}
+
 // Remembers only the single most-recently-submitted encounter (web only,
 // via localStorage) so a physician can get back to its note/transcript
 // after closing or reloading the app — not a full browsable history,
@@ -302,6 +359,7 @@ export default function App() {
   const [noteTexts, setNoteTexts] = useState({}); // { [noteId]: { loading, text, error } }
   const [compilingForDragon, setCompilingForDragon] = useState(false);
   const [launchingDragonCopilot, setLaunchingDragonCopilot] = useState(false);
+  const [exportingFqhcForm, setExportingFqhcForm] = useState(false);
 
   // Dragon Copilot Summary — a left-side slide-in panel showing the
   // compiled IPS + Clinical Notes text (mirrors the Epic Chart Summary
@@ -993,6 +1051,35 @@ export default function App() {
     }
   }
 
+  // Downloads the FQHC Sliding Fee Scale spreadsheet, filled in with this
+  // encounter's FQHC Intake form output (2026-09-28) — web only, same as
+  // the Dragon Copilot launch above, since there's no file-download
+  // mechanism on native without extra platform APIs this app doesn't use
+  // elsewhere. Uses the current physician edits (editedNoteSections) where
+  // present, falling back to Dragon Copilot's original section content.
+  async function handleExportFqhcForm() {
+    if (Platform.OS !== 'web' || !formOutputResult) return;
+    const parsedFormOutput = parseDragonNote(formOutputResult);
+    if (!parsedFormOutput) return;
+    setExportingFqhcForm(true);
+    try {
+      const fields = buildFqhcExportFields(parsedFormOutput.sections, editedNoteSections);
+      const blob = await DdeClient.exportFqhcForm(fields);
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = 'fqhc-sliding-fee-scale.xlsx';
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      notify('Could not export FQHC form', String(err?.message ?? err));
+    } finally {
+      setExportingFqhcForm(false);
+    }
+  }
+
   function handleDiscard() {
     setAudioUri(null);
     setAudioName(null);
@@ -1505,10 +1592,31 @@ export default function App() {
     // sections.
     function renderFormOutputTab() {
       const parsedFormOutput = formOutputResult ? parseDragonNote(formOutputResult) : null;
+      // Only the FQHC Intake form has a spreadsheet to export into — spotted
+      // by its section titles matching the known field set (2026-09-28)
+      // rather than the current "Output" picker selection, since that can
+      // change after the recording this result belongs to was submitted.
+      const isFqhcForm = !!parsedFormOutput?.sections?.some((s) => FQHC_FORM_FIELD_TITLES.includes(s.title.trim()));
       if (parsedFormOutput) {
         return (
           <>
             <Text style={styles.noteTitle}>{parsedFormOutput.title}</Text>
+            {Platform.OS === 'web' && isFqhcForm && (
+              <TouchableOpacity
+                style={[styles.launchDragonButton, exportingFqhcForm && styles.buttonDisabled]}
+                onPress={handleExportFqhcForm}
+                disabled={exportingFqhcForm}
+              >
+                {exportingFqhcForm ? (
+                  <ActivityIndicator color={C.blue} size="small" />
+                ) : (
+                  <Ionicons name="download-outline" size={16} color={C.blue} />
+                )}
+                <Text style={styles.launchDragonButtonText}>
+                  {exportingFqhcForm ? 'Exporting…' : 'Export'}
+                </Text>
+              </TouchableOpacity>
+            )}
             {parsedFormOutput.sections.map((section) => (
               <View key={section.id} style={styles.noteSection}>
                 <Text style={styles.noteSectionTitle}>{section.title}</Text>
