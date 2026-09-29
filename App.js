@@ -125,12 +125,31 @@ function parseDragonNote(noteBody) {
     const sections = payload.resources.map((r) => ({
       id: r.legacy_id ?? r.id,
       title: r.context?.display_description || r.legacy_id || r.id,
-      content: (r.content || '').replace(/\r\n/g, '\n').trim(),
+      content: resourceContent(r),
     }));
     return { title: payload.document?.title || 'Clinical Note', sections };
   } catch {
     return null;
   }
+}
+
+// A clinical note's resources carry their text in "content". A
+// Voice-to-Form resource (e.g. FQHC Intake, confirmed live 2026-09-28)
+// carries it in "value" instead — content is absent from the JSON
+// entirely, not just empty — and value itself can be a plain string, a
+// boolean for yes/no fields ("Employed"), or missing altogether when the
+// field was never captured. Also confirmed live: an uncaptured string
+// field can come back as the literal text "null" rather than an empty
+// string or real null -- treated the same as no value.
+function resourceContent(r) {
+  if (typeof r.content === 'string') {
+    return r.content.replace(/\r\n/g, '\n').trim();
+  }
+  const value = r.value;
+  if (typeof value === 'boolean') return value ? 'Yes' : 'No';
+  if (value === undefined || value === null) return '';
+  const text = String(value).trim();
+  return text.toLowerCase() === 'null' ? '' : text;
 }
 
 // Dragon Copilot delivers the transcript as a separate notification from
