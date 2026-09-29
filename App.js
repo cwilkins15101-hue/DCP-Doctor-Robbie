@@ -456,7 +456,16 @@ export default function App() {
   const transcriptIsCurrent =
     transcriptReady && (!lastSubmittedAt || new Date(transcriptResult.storedAt) >= lastSubmittedAt);
 
-  const pulseAnim = useRef(new Animated.Value(1)).current;
+  // Drives the mic-level ring around the record button (2026-09-29) — 0 is
+  // silence, 1 is loud. Web fills this from a live getUserMedia analyser
+  // (see startMicLevelMeterWeb below); native fills it from expo-av's own
+  // recording metering (see startRecording's isMeteringEnabled option).
+  const micLevelAnim = useRef(new Animated.Value(0)).current;
+  // Web only -- holds the extra getUserMedia stream, AudioContext, and
+  // requestAnimationFrame id opened purely to visualize mic input, kept
+  // entirely separate from the Dragon Copilot SDK's own internal capture
+  // (which we have no access to). Torn down in stopMicLevelMeterWeb.
+  const micMeterRef = useRef(null);
   const timerRef = useRef(null);
   // Holds the correlationId of the current SDK-based ambient recording
   // (see startLiveCaptureWeb/stopLiveCaptureWeb below, dragonCopilotSdk.js)
@@ -614,20 +623,76 @@ export default function App() {
 
   useEffect(() => {
     if (isRecording) {
-      Animated.loop(
-        Animated.sequence([
-          Animated.timing(pulseAnim, { toValue: 1.15, duration: 600, useNativeDriver: true }),
-          Animated.timing(pulseAnim, { toValue: 1, duration: 600, useNativeDriver: true }),
-        ])
-      ).start();
       timerRef.current = setInterval(() => setDuration(d => d + 1), 1000);
+      if (Platform.OS === 'web') startMicLevelMeterWeb();
     } else {
-      pulseAnim.setValue(1);
-      pulseAnim.stopAnimation();
+      micLevelAnim.setValue(0);
+      if (Platform.OS === 'web') stopMicLevelMeterWeb();
       clearInterval(timerRef.current);
     }
-    return () => clearInterval(timerRef.current);
+    return () => {
+      clearInterval(timerRef.current);
+      if (Platform.OS === 'web') stopMicLevelMeterWeb();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isRecording]);
+
+  // Live mic-level meter (web only, 2026-09-29) -- opens its own, separate
+  // getUserMedia stream purely to visualize input volume, since the Dragon
+  // Copilot SDK owns its internal capture stream and exposes no level data
+  // of its own. Browsers don't re-prompt for mic permission once already
+  // granted on this origin, so this doesn't show a second permission dialog
+  // in practice. Non-fatal if it fails (e.g. permission denied) -- the ring
+  // just stays flat; the actual recording (via the SDK) is unaffected.
+  function startMicLevelMeterWeb() {
+    (async () => {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+        const audioContext = new AudioContextClass();
+        const source = audioContext.createMediaStreamSource(stream);
+        const analyser = audioContext.createAnalyser();
+        analyser.fftSize = 256;
+        source.connect(analyser);
+        const data = new Uint8Array(analyser.frequencyBinCount);
+
+        const meter = { stream, audioContext, rafId: null, smoothedLevel: 0 };
+        micMeterRef.current = meter;
+
+        function tick() {
+          analyser.getByteTimeDomainData(data);
+          let sumSquares = 0;
+          for (let i = 0; i < data.length; i++) {
+            const normalized = (data[i] - 128) / 128;
+            sumSquares += normalized * normalized;
+          }
+          const rms = Math.sqrt(sumSquares / data.length); // ~0 (silence) to ~1 (loud)
+          const level = Math.min(1, rms * 4); // typical speech rarely hits raw 1.0 -- boost into a usable range
+
+          // VU-meter ballistics: jumps up fast on a loud syllable, settles
+          // back down more slowly between words, rather than either
+          // snapping instantly or breathing on a fixed timer.
+          const rate = level > meter.smoothedLevel ? 0.5 : 0.15;
+          meter.smoothedLevel += (level - meter.smoothedLevel) * rate;
+          micLevelAnim.setValue(meter.smoothedLevel);
+
+          meter.rafId = requestAnimationFrame(tick);
+        }
+        meter.rafId = requestAnimationFrame(tick);
+      } catch (err) {
+        console.error('Mic level meter failed to start (recording itself is unaffected):', err);
+      }
+    })();
+  }
+
+  function stopMicLevelMeterWeb() {
+    const meter = micMeterRef.current;
+    if (!meter) return;
+    cancelAnimationFrame(meter.rafId);
+    meter.stream.getTracks().forEach((t) => t.stop());
+    meter.audioContext.close().catch(() => {});
+    micMeterRef.current = null;
+  }
 
   // ---- Recording ----
 
@@ -691,6 +756,20 @@ export default function App() {
     return capture.correlationId;
   }
 
+  // Native's mic-level ring source (2026-09-29) -- expo-av reports real
+  // metering itself (unlike web, which needs its own separate getUserMedia
+  // analyser since the Dragon Copilot SDK owns web's capture stream).
+  // metering is in dB, roughly -160 (silence) to 0 (loudest); -60dB and
+  // below is treated as silence for this purpose since that covers normal
+  // room noise, not just true digital silence. Animated over the same
+  // ~100ms interval status updates arrive at, so it reads as smooth
+  // movement rather than a series of jumps.
+  function onNativeRecordingStatusUpdate(status) {
+    if (typeof status?.metering !== 'number') return;
+    const level = Math.max(0, Math.min(1, (status.metering + 60) / 60));
+    Animated.timing(micLevelAnim, { toValue: level, duration: 100, useNativeDriver: true }).start();
+  }
+
   async function startRecording() {
     try {
       if (Platform.OS === 'web') {
@@ -706,7 +785,9 @@ export default function App() {
       }
       await Audio.setAudioModeAsync({ allowsRecordingIOS: true, playsInSilentModeIOS: true });
       const { recording: rec } = await Audio.Recording.createAsync(
-        Audio.RecordingOptionsPresets.HIGH_QUALITY
+        { ...Audio.RecordingOptionsPresets.HIGH_QUALITY, isMeteringEnabled: true },
+        onNativeRecordingStatusUpdate,
+        100
       );
       setRecording(rec);
       setIsRecording(true);
@@ -1957,7 +2038,19 @@ export default function App() {
 
               <Text style={styles.timer}>{formatDuration(duration)}</Text>
 
-              <Animated.View style={{ transform: [{ scale: pulseAnim }] }}>
+              <View style={styles.recordButtonWrapper}>
+                {isRecording && (
+                  <Animated.View
+                    pointerEvents="none"
+                    style={[
+                      styles.micLevelRing,
+                      {
+                        opacity: micLevelAnim.interpolate({ inputRange: [0, 1], outputRange: [0.15, 0.6] }),
+                        transform: [{ scale: micLevelAnim.interpolate({ inputRange: [0, 1], outputRange: [1, 1.3] }) }],
+                      },
+                    ]}
+                  />
+                )}
                 <TouchableOpacity
                   style={[styles.recordButton, isRecording && styles.recordButtonActive]}
                   onPress={isRecording ? stopRecording : startRecording}
@@ -1969,7 +2062,7 @@ export default function App() {
                     color="#FFFFFF"
                   />
                 </TouchableOpacity>
-              </Animated.View>
+              </View>
 
               <Text style={styles.recordHint}>
                 {isRecording ? 'Tap to stop' : audioUri ? 'Tap to re-record' : 'Tap to begin recording'}
@@ -2460,6 +2553,15 @@ const styles = StyleSheet.create({
   recordingDot: { width: 10, height: 10, borderRadius: 5, backgroundColor: C.danger },
   recordingLabel: { fontSize: 13, fontWeight: '700', color: C.danger, letterSpacing: 1, textTransform: 'uppercase' },
   timer: { fontSize: 52, fontWeight: '200', color: C.blue, fontVariant: ['tabular-nums'], letterSpacing: 3 },
+  recordButtonWrapper: { width: 100, height: 100, alignItems: 'center', justifyContent: 'center' },
+  // Grows/brightens with live mic input while recording (see micLevelAnim)
+  // -- 40px larger than recordButton in each dimension, centered behind it
+  // via the negative top/left offset below.
+  micLevelRing: {
+    position: 'absolute', top: -20, left: -20,
+    width: 140, height: 140, borderRadius: 70,
+    borderWidth: 3, borderColor: C.danger, backgroundColor: 'transparent',
+  },
   recordButton: {
     width: 100, height: 100, borderRadius: 50, backgroundColor: C.blue,
     alignItems: 'center', justifyContent: 'center',
