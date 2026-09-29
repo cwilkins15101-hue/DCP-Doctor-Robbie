@@ -557,6 +557,22 @@ export default function App() {
     })();
   }, []);
 
+  // Pre-warms the Dragon Copilot SDK (2026-09-29) -- the SDK script fetch +
+  // dragon.initialize() + auth token exchange only happen once per page
+  // load (see dragonCopilotSdk.js's cached initializePromise), but if
+  // nothing triggers that until the physician's first tap of the record
+  // button, that ~5-10s cost lands right when they're trying to start
+  // recording. Kicking it off here instead, as soon as they're signed in,
+  // lets it finish in the background while they're picking a patient.
+  // Non-fatal if it fails -- the real startAmbientRecording call will
+  // just surface whatever error this hit when they actually try to record.
+  useEffect(() => {
+    if (Platform.OS !== 'web' || !msftUser) return;
+    DragonCopilotSdk.preload().catch((err) => {
+      console.error('Dragon Copilot SDK pre-warm failed (will retry on first recording):', err);
+    });
+  }, [msftUser]);
+
   // Indexes every new encounter server-side for cross-device history
   // (2026-09-25) — only fires when correlationId actually changes to a new
   // value, i.e. once per fresh encounter, not on every additional recording

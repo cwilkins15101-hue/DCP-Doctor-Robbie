@@ -69,6 +69,13 @@ function loadSdkScript() {
     };
     script.onerror = () => reject(new Error('Failed to load the Dragon Copilot SDK script.'));
     document.head.appendChild(script);
+  }).catch((err) => {
+    // Clears the cache on failure so the next call (e.g. the pre-warm
+    // below retrying on the physician's first real recording attempt)
+    // gets a fresh attempt instead of permanently reusing this same
+    // rejected promise for the rest of the page session (2026-09-29).
+    sdkScriptPromise = null;
+    throw err;
   });
   return sdkScriptPromise;
 }
@@ -124,6 +131,14 @@ async function ensureInitialized() {
       enableAll: false,
     });
     return dragon;
+  }).catch((err) => {
+    // Same reasoning as loadSdkScript's catch above -- without this, a
+    // failed pre-warm (see App.js) would permanently break the SDK for
+    // the rest of the page session, even if whatever caused it (e.g. a
+    // transient network error) was long gone by the time the physician
+    // actually tries to record.
+    initializePromise = null;
+    throw err;
   });
   return initializePromise;
 }
@@ -258,8 +273,16 @@ async function stopAmbientRecording() {
   return correlationId;
 }
 
+// Public name for ensureInitialized (2026-09-29) -- lets App.js kick off
+// the SDK script load + dragon.initialize() + auth token exchange as soon
+// as a physician signs in, rather than only on their first tap of the
+// record button. ensureInitialized() is already idempotent (a single
+// cached promise -- see initializePromise above), so calling it here just
+// means that ~5-10s cost happens in the background while they're picking
+// a patient, instead of blocking their first recording.
 export const DragonCopilotSdk = {
   missingConfigKeys,
+  preload: ensureInitialized,
   startAmbientRecording,
   stopAmbientRecording,
 };
