@@ -45,28 +45,47 @@ test('leaves unset fields blank rather than writing empty strings', async () => 
   assert.equal(sheet.getCell('F49').value, null);
 });
 
-test('always marks Self as counting toward household size, with their name', async () => {
-  const buffer = await buildFqhcExport({ 'Full Legal Name': 'Jane Doe', 'Marital Status': 'S' });
+test('fills Self (Line 1) from the applicant\'s own name/DOB and marks them as counting', async () => {
+  const buffer = await buildFqhcExport({ 'Full Legal Name': 'Jane Doe', 'Date of Birth': '1990-01-01' });
   const sheet = await loadSheet(buffer);
 
   assert.equal(sheet.getCell('C11').value, 'Jane Doe');
+  assert.equal(sheet.getCell('D11').value, '1990-01-01');
   assert.equal(sheet.getCell('F11').value, 1);
-  assert.equal(sheet.getCell('F12').value, null);
 });
 
-test('marks Spouse/Partner as counting toward household size when Marital Status is M', async () => {
-  const buffer = await buildFqhcExport({ 'Full Legal Name': 'Jane Doe', 'Marital Status': 'M' });
+// The FQHC Intake form doesn't report per-dependent names/DOBs at all, so
+// Lines 2-4 are a fixed illustrative household (this is a partner demo
+// tool, not a production intake path -- see fqhcExport.js) rather than
+// something derived from the actual encounter, regardless of what Marital
+// Status or Family Size came back.
+test('hardcodes Spouse/Partner and two Dependent Children as counting toward household size', async () => {
+  const buffer = await buildFqhcExport({ 'Full Legal Name': 'Jane Doe' });
   const sheet = await loadSheet(buffer);
 
-  assert.equal(sheet.getCell('F11').value, 1);
+  assert.equal(sheet.getCell('C12').value, 'Mary Lin');
+  assert.equal(sheet.getCell('D12').value.getTime(), new Date(1975, 6, 6).getTime());
   assert.equal(sheet.getCell('F12').value, 1);
+
+  assert.equal(sheet.getCell('C13').value, 'Sam Lin');
+  assert.equal(sheet.getCell('D13').value.getTime(), new Date(2012, 4, 10).getTime());
+  assert.equal(sheet.getCell('F13').value, 1);
+
+  assert.equal(sheet.getCell('C14').value, 'Tina Lin');
+  assert.equal(sheet.getCell('D14').value.getTime(), new Date(2017, 1, 7).getTime());
+  assert.equal(sheet.getCell('F14').value, 1);
 });
 
-test('Marital Status match is case-insensitive and trims whitespace', async () => {
-  const buffer = await buildFqhcExport({ 'Marital Status': ' m ' });
+test('Total Household Size formula sums to 4 for the hardcoded household', async () => {
+  const buffer = await buildFqhcExport({ 'Full Legal Name': 'Jane Doe' });
   const sheet = await loadSheet(buffer);
 
-  assert.equal(sheet.getCell('F12').value, 1);
+  const f11 = sheet.getCell('F11').value;
+  const f12 = sheet.getCell('F12').value;
+  const f13 = sheet.getCell('F13').value;
+  const f14 = sheet.getCell('F14').value;
+  const f15 = sheet.getCell('F15').value || 0;
+  assert.equal(f11 + f12 + f13 + f14 + f15, 4);
 });
 
 test('an unrecognized field name is ignored rather than throwing', async () => {

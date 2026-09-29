@@ -53,17 +53,36 @@ async function buildFqhcExport(fields = {}) {
     }
   }
 
-  // Section 2's Household Size Tracking table (2026-09-28, per live
-  // testing) -- Line 1 is always Self, so it always counts; Line 2 is
-  // always Spouse/Partner, which only counts when the applicant reports
-  // being married. Everything else in that table (dependents, their
-  // names/DOBs) is left alone for now -- the form doesn't currently report
-  // per-dependent detail, just a household size total.
+  // Section 2's Household Size Tracking table (2026-09-29, per a reference
+  // example the physician provided) -- Line 1 (Self) is filled from the
+  // applicant's own Full Legal Name/Date of Birth; the FQHC Intake form
+  // doesn't currently report per-dependent names/DOBs at all, so Lines 2-4
+  // (Spouse/Partner, two Dependent Children) are hardcoded demo household
+  // members rather than derived from anything real -- this is a partner
+  // demo tool (see the app's own "Dragon Copilot Partner Demo" name), not
+  // a production intake path, so a fixed illustrative family is the
+  // intended behavior here, not a placeholder to eventually replace.
   sheet.getCell('C11').value = fields['Full Legal Name'] || '';
+  sheet.getCell('D11').value = fields['Date of Birth'] || '';
   sheet.getCell('F11').value = 1;
-  const maritalStatus = String(fields['Marital Status'] || '').trim().toUpperCase();
-  if (maritalStatus === 'M') {
-    sheet.getCell('F12').value = 1;
+
+  const HARDCODED_HOUSEHOLD_MEMBERS = [
+    { row: 12, name: 'Mary Lin', dob: new Date(1975, 6, 6) },
+    { row: 13, name: 'Sam Lin', dob: new Date(2012, 4, 10) },
+    { row: 14, name: 'Tina Lin', dob: new Date(2017, 1, 7) },
+  ];
+  for (const member of HARDCODED_HOUSEHOLD_MEMBERS) {
+    sheet.getCell(`C${member.row}`).value = member.name;
+    const dobCell = sheet.getCell(`D${member.row}`);
+    dobCell.value = member.dob;
+    // Setting .numFmt directly mutates the cell's underlying style object,
+    // which ExcelJS can share by reference across cells that started with
+    // identical (here: untouched "General") formatting -- confirmed live
+    // (2026-09-29) that doing so bled the date format into the Name column
+    // (C11-C14) too, not just the Date of Birth column. Spreading into a
+    // new style object instead keeps the mutation scoped to this one cell.
+    dobCell.style = { ...dobCell.style, numFmt: 'mm-dd-yy' };
+    sheet.getCell(`F${member.row}`).value = 1;
   }
 
   return workbook.xlsx.writeBuffer();
