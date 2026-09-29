@@ -211,7 +211,15 @@ let currentSession = null; // { correlationId, unsubscribe() }
 // discarding them.
 async function startAmbientRecording({ correlationId, patient, outputFormIds, onUploadStatusChanged }) {
   const dragon = await ensureInitialized();
-  await dragon.recording.ambient.setSessionData(buildAmbientData(correlationId, patient, outputFormIds));
+  const ambientData = buildAmbientData(correlationId, patient, outputFormIds);
+  // Logged (2026-09-29) since this request goes straight from the browser
+  // to Dragon Copilot's SDK -- dde-webhook never sees it, so it's
+  // otherwise impossible to confirm after the fact whether a requested
+  // Voice-to-Form (e.g. FQHC Intake) actually made it into the session
+  // Dragon Copilot received. Shows up in the in-app "View Log" screen too
+  // (see App.js's console.log patch), not just the browser console.
+  console.log('[DragonCopilotSdk] starting ambient recording with session data:', ambientData);
+  await dragon.recording.ambient.setSessionData(ambientData);
 
   const uploadHandler = (event) => onUploadStatusChanged?.(event?.status ?? event);
   dragon.recording.ambient.events.addEventListener('ambientRecordingUploadStatusChanged', uploadHandler);
