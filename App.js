@@ -1453,7 +1453,7 @@ export default function App() {
       <SafeAreaView style={styles.safeArea}>
         <StatusBar style="auto" />
         <View style={styles.signInContainer}>
-          <Text style={styles.title}>Doctor Robbie</Text>
+          <Text style={styles.title}>Dragon Copilot Partner Demo</Text>
           <Text style={styles.subtitle}>Sign in to continue</Text>
           {missingMsftKeys.length > 0 ? (
             <View style={styles.dragonWarningBox}>
@@ -1871,7 +1871,7 @@ export default function App() {
             <Text style={styles.viewResultsButtonText}>‹ View Dragon Copilot Results</Text>
           </TouchableOpacity>
         )}
-        <Text style={styles.title}>Doctor Robbie</Text>
+        <Text style={styles.title}>Dragon Copilot Partner Demo</Text>
         <Text style={styles.subtitle}>
           {dragonCorrelationId ? 'Recording #' + (recordings.length + 1) + ' for this encounter' : 'Patient Encounter Recording'}
         </Text>
