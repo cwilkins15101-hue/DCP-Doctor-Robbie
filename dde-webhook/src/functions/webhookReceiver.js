@@ -34,6 +34,25 @@ async function fetchRetrievalData(retrievalUrl) {
   return response.json();
 }
 
+// DAX Core sometimes sends TWO supplemental_encounter_data_ready
+// notifications for the same recording -- the real Voice-to-Form output,
+// and a second, blank stub (an empty "resources" array, generic
+// "Outpatient Note" title, no document.type) that silently overwrites the
+// real one if saved unconditionally (confirmed with Microsoft, 2026-09-29
+// -- believed to be a DAX Core issue, similar to the earlier WebSocket/
+// DAXCore finding). Returns the parsed resources array, or null if it
+// can't be determined (malformed data, or a shape this doesn't recognize)
+// -- callers should fail OPEN on null rather than block a save they can't
+// actually evaluate.
+function parseSupplementalResources(data) {
+  try {
+    const inner = JSON.parse(data?.data);
+    return Array.isArray(inner.resources) ? inner.resources : null;
+  } catch {
+    return null;
+  }
+}
+
 async function handleNotification(request, context) {
   // Simplest of the three documented security options: a shared secret
   // passed as ?access_token=... when the subscription was provisioned.
@@ -69,6 +88,25 @@ async function handleNotification(request, context) {
 
   try {
     const data = await fetchRetrievalData(retrievalUrl);
+
+    // Skip storing a blank duplicate delivery rather than let it overwrite
+    // real Voice-to-Form data already saved for this correlationId (see
+    // parseSupplementalResources above). Checking "resources is non-empty"
+    // rather than matching a specific form's title/type protects every
+    // Voice-to-Form output, not just FQHC Intake -- a real, populated form
+    // response always has one resource entry per field, even when most of
+    // the values inside are blank (confirmed live 2026-09-28); an empty
+    // resources array is never a valid result worth keeping.
+    if (eventType === 'supplemental_encounter_data_ready') {
+      const resources = parseSupplementalResources(data);
+      if (resources !== null && resources.length === 0) {
+        context.log(
+          `Ignoring a blank supplemental_encounter_data_ready payload (0 resources) for correlationId ${correlationId} -- likely a duplicate DAX Core delivery; keeping whatever was already stored.`
+        );
+        return { status: 200 };
+      }
+    }
+
     // Keyed by the CloudEvent's own type (e.g. "encounter_data_ready_complete"
     // vs "transcript_ready_complete") rather than a field parsed out of the
     // retrieval payload — the confirmed transcript schema doesn't carry an

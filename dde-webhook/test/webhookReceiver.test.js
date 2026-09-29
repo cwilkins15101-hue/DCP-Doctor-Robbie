@@ -181,6 +181,81 @@ test('POST with a supplemental_encounter_data_ready event (Voice-to-Form) is rec
   assert.equal(savedResults[0].eventType, 'supplemental_encounter_data_ready');
 });
 
+// DAX Core duplicate-delivery workaround (confirmed with Microsoft,
+// 2026-09-29): a supplemental_encounter_data_ready payload with an empty
+// resources array is a known blank duplicate, not a real result, and
+// must never overwrite the real one already saved for this correlationId.
+test('POST with a blank supplemental_encounter_data_ready payload (0 resources) is not stored', async () => {
+  savedResults.length = 0;
+  global.fetch = async () => ({
+    ok: true,
+    json: async () => ({
+      data: JSON.stringify({ document: { title: 'Outpatient Note' }, resources: [] }),
+    }),
+  });
+  const res = await webhookHandler(
+    fakeRequest({
+      query: { access_token: 'test-webhook-secret' },
+      body: JSON.stringify({
+        specversion: '1.0',
+        type: 'supplemental_encounter_data_ready',
+        data: { retrievalUrl: 'https://example.com/retrieval/123', correlationId: 'corr-4' },
+      }),
+    }),
+    noopContext
+  );
+  assert.equal(res.status, 200);
+  assert.equal(savedResults.length, 0);
+});
+
+test('POST with a populated supplemental_encounter_data_ready payload is still stored', async () => {
+  savedResults.length = 0;
+  global.fetch = async () => ({
+    ok: true,
+    json: async () => ({
+      data: JSON.stringify({
+        document: { title: 'FQHC Intake Form', type: { text: 'fqhc_intake' } },
+        resources: [{ id: '1', context: { display_description: 'Phone Number' }, value: '' }],
+      }),
+    }),
+  });
+  const res = await webhookHandler(
+    fakeRequest({
+      query: { access_token: 'test-webhook-secret' },
+      body: JSON.stringify({
+        specversion: '1.0',
+        type: 'supplemental_encounter_data_ready',
+        data: { retrievalUrl: 'https://example.com/retrieval/123', correlationId: 'corr-5' },
+      }),
+    }),
+    noopContext
+  );
+  assert.equal(res.status, 200);
+  assert.equal(savedResults.length, 1);
+  assert.equal(savedResults[0].eventType, 'supplemental_encounter_data_ready');
+});
+
+test('a supplemental_encounter_data_ready payload whose resources can\'t be determined still saves (fails open)', async () => {
+  savedResults.length = 0;
+  global.fetch = async () => ({
+    ok: true,
+    json: async () => ({ data: JSON.stringify({ formId: 'referral_letter_to_clinician' }) }),
+  });
+  const res = await webhookHandler(
+    fakeRequest({
+      query: { access_token: 'test-webhook-secret' },
+      body: JSON.stringify({
+        specversion: '1.0',
+        type: 'supplemental_encounter_data_ready',
+        data: { retrievalUrl: 'https://example.com/retrieval/123', correlationId: 'corr-6' },
+      }),
+    }),
+    noopContext
+  );
+  assert.equal(res.status, 200);
+  assert.equal(savedResults.length, 1);
+});
+
 test('getResult OPTIONS preflight returns 204 with CORS headers', async () => {
   const res = await getResultHandler(fakeRequest({ method: 'OPTIONS', headers: {}, query: {} }), noopContext);
   assert.equal(res.status, 204);
