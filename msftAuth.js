@@ -16,6 +16,7 @@
 // token covers both identifying them in the app and launching Dragon
 // Copilot later.
 // ---------------------------------------------------------------------------
+import { Platform } from 'react-native';
 import * as AuthSession from 'expo-auth-session';
 import * as WebBrowser from 'expo-web-browser';
 
@@ -57,10 +58,38 @@ function decodeIdTokenClaims(idToken) {
   }
 }
 
-// In-memory only — cleared on reload, matching the "sign in each session"
-// pattern already used for Epic. { accessToken, refreshToken, expiresAt,
-// name, username }
-let cachedToken = null;
+// { accessToken, refreshToken, expiresAt, name, username }
+// Kept in memory, and on web also in sessionStorage (per-tab, cleared when
+// the tab closes) so a page reload — such as the full-page redirect to Epic
+// and back — doesn't drop the physician back at the sign-in screen.
+const TOKEN_KEY = 'msftAuth.token';
+
+function storage() {
+  try {
+    return Platform.OS === 'web' ? globalThis.sessionStorage : null;
+  } catch {
+    return null;
+  }
+}
+
+function persistToken() {
+  try {
+    if (cachedToken) storage()?.setItem(TOKEN_KEY, JSON.stringify(cachedToken));
+    else storage()?.removeItem(TOKEN_KEY);
+  } catch {
+    // Storage unavailable (e.g. private mode) — in-memory token still works.
+  }
+}
+
+function loadPersistedToken() {
+  try {
+    return JSON.parse(storage()?.getItem(TOKEN_KEY) ?? 'null');
+  } catch {
+    return null;
+  }
+}
+
+let cachedToken = loadPersistedToken();
 
 function hasValidToken() {
   return !!(cachedToken && cachedToken.expiresAt > Date.now());
@@ -78,6 +107,7 @@ function applyTokenResponse(tokenResponse) {
     name: claims?.name ?? cachedToken?.name ?? null,
     username: claims?.preferred_username ?? cachedToken?.username ?? null,
   };
+  persistToken();
   return cachedToken.accessToken;
 }
 
@@ -144,12 +174,15 @@ async function getAccessToken() {
 }
 
 function getSignedInUser() {
-  if (!hasValidToken()) return null;
+  // An expired access token with a refresh token still counts as signed in:
+  // getAccessToken() renews it silently.
+  if (!hasValidToken() && !cachedToken?.refreshToken) return null;
   return { name: cachedToken.name, username: cachedToken.username };
 }
 
 function signOut() {
   cachedToken = null;
+  persistToken();
 }
 
 export const MsftAuth = {

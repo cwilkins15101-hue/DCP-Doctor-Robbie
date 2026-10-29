@@ -15,6 +15,7 @@ import { DragonCopilotSdk } from './dragonCopilotSdk';
 import { DdeClient } from './ddeClient';
 import { EpicClient } from './epicClient';
 import { MsftAuth } from './msftAuth';
+import { EPIC_RESUME_KEY } from './epicAuth';
 
 // ---------------------------------------------------------------------------
 // Color tokens — Blue & Gold
@@ -320,9 +321,9 @@ export default function App() {
   const [screen, setScreen] = useState('record');
 
   // Doctor Robbie's own login — Microsoft sign-in (see msftAuth.js). In
-  // memory only, so every fresh load starts signed out; msftUser gates the
+  // remembered per browser tab on web; msftUser gates the
   // whole app below, before any screen-specific rendering.
-  const [msftUser, setMsftUser] = useState(null);
+  const [msftUser, setMsftUser] = useState(() => MsftAuth.getSignedInUser());
   const [msftSigningIn, setMsftSigningIn] = useState(false);
   const [msftSignInError, setMsftSignInError] = useState('');
 
@@ -952,6 +953,20 @@ export default function App() {
       setLoadingEpicPatients(false);
     }
   }
+
+  // Epic sign-in on web is a full-page redirect (see epicAuth.js), so the
+  // app reloads on the way back. If that's what just happened, finish the
+  // Epic Patient List load the physician started.
+  useEffect(() => {
+    if (Platform.OS !== 'web' || !msftUser) return;
+    let resume = false;
+    try {
+      resume = globalThis.sessionStorage?.getItem(EPIC_RESUME_KEY) === '1';
+      if (resume) globalThis.sessionStorage.removeItem(EPIC_RESUME_KEY);
+    } catch {}
+    if (resume) handleLoadEpicPatients();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [msftUser]);
 
   function selectPatient(patient) {
     setSelectedPatient(patient);

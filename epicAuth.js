@@ -10,6 +10,7 @@
 // https://fhir.epic.com/Developer (instant, no approval needed for sandbox
 // use).
 // ---------------------------------------------------------------------------
+import { Platform } from 'react-native';
 import * as AuthSession from 'expo-auth-session';
 import * as WebBrowser from 'expo-web-browser';
 
@@ -51,14 +52,120 @@ function missingConfigKeys() {
     .map(([key]) => key);
 }
 
-// In-memory only — cleared on reload, matching the "sign in each session"
-// pattern used elsewhere in this prototype. Epic's sandbox access tokens
-// are typically short-lived (~55 min); this doesn't implement the
-// online_access refresh-token flow, so signIn() runs again once expired.
+// Kept in memory, and on web also in sessionStorage so it survives the
+// full-page redirect to Epic and back (see signInViaRedirect below).
+// Epic's sandbox access tokens are typically short-lived (~55 min); this
+// doesn't implement the online_access refresh-token flow, so signIn() runs
+// again once expired.
 let cachedToken = null; // { accessToken, expiresAt }
+
+const TOKEN_KEY = 'epicAuth.token';
+const PENDING_KEY = 'epicAuth.pending'; // { state, codeVerifier, redirectUri }
+// Set just before leaving for Epic so the app knows to pick up where it left
+// off (reload the patient list) once it's back.
+export const EPIC_RESUME_KEY = 'epicAuth.resume';
+
+function storage() {
+  try {
+    return Platform.OS === 'web' ? globalThis.sessionStorage : null;
+  } catch {
+    return null;
+  }
+}
+
+function readJson(key) {
+  try {
+    return JSON.parse(storage()?.getItem(key) ?? 'null');
+  } catch {
+    return null;
+  }
+}
+
+function persistToken() {
+  try {
+    if (cachedToken) storage()?.setItem(TOKEN_KEY, JSON.stringify(cachedToken));
+    else storage()?.removeItem(TOKEN_KEY);
+  } catch {
+    // Storage unavailable (e.g. private mode) — in-memory token still works.
+  }
+}
+
+cachedToken = readJson(TOKEN_KEY);
 
 function hasValidToken() {
   return !!(cachedToken && cachedToken.expiresAt > Date.now());
+}
+
+function storeTokenResponse(tokenResponse) {
+  cachedToken = {
+    accessToken: tokenResponse.accessToken,
+    expiresAt: Date.now() + (tokenResponse.expiresIn ?? 3300) * 1000,
+  };
+  persistToken();
+  return cachedToken.accessToken;
+}
+
+function buildRequest(redirectUri) {
+  return new AuthSession.AuthRequest({
+    clientId: CLIENT_ID,
+    scopes: SCOPES,
+    redirectUri,
+    responseType: AuthSession.ResponseType.Code,
+    usePKCE: true,
+    extraParams: { aud: FHIR_BASE_URL },
+  });
+}
+
+// Web sign-in: a full-page redirect to Epic and back, instead of the pop-up
+// expo-auth-session uses by default. Epic's login pages sever the link
+// between a pop-up and the page that opened it, so the opener sees the
+// pop-up as closed ("Epic sign-in was cancelled.") while the pop-up itself
+// lands back on this app with the code in its URL and no way to hand it
+// over. Redirecting the whole page has no opener to lose.
+async function signInViaRedirect(redirectUri) {
+  const request = buildRequest(redirectUri);
+  const authUrl = await request.makeAuthUrlAsync(discovery);
+  storage().setItem(
+    PENDING_KEY,
+    JSON.stringify({ state: request.state, codeVerifier: request.codeVerifier, redirectUri })
+  );
+  storage().setItem(EPIC_RESUME_KEY, '1');
+  globalThis.location.assign(authUrl);
+  // The page is navigating away; never resolve so callers don't act on a
+  // missing token in the meantime.
+  return new Promise(() => {});
+}
+
+// If the page was just loaded as Epic's redirect back (?code=...&state=...
+// matching the sign-in we started), exchange the code for a token. Returns
+// the token, or null if this load isn't an Epic return.
+async function completeRedirectIfPresent() {
+  if (Platform.OS !== 'web') return null;
+  const pending = readJson(PENDING_KEY);
+  if (!pending) return null;
+
+  const url = new URL(globalThis.location.href);
+  if (url.searchParams.get('state') !== pending.state) return null;
+
+  storage().removeItem(PENDING_KEY);
+  // Strip the one-time code from the address bar and history.
+  globalThis.history.replaceState({}, '', url.origin + url.pathname);
+
+  const error = url.searchParams.get('error');
+  if (error) {
+    throw new Error(`Epic sign-in failed: ${url.searchParams.get('error_description') || error}`);
+  }
+
+  const tokenResponse = await AuthSession.exchangeCodeAsync(
+    {
+      clientId: CLIENT_ID,
+      code: url.searchParams.get('code'),
+      redirectUri: pending.redirectUri,
+      extraParams: { code_verifier: pending.codeVerifier },
+    },
+    discovery
+  );
+  return storeTokenResponse(tokenResponse);
 }
 
 async function signIn() {
@@ -73,15 +180,9 @@ async function signIn() {
   // the Epic app registration's redirect URIs.
   console.log('Epic sign-in redirect URI (must be registered on the Epic app):', redirectUri);
 
-  const request = new AuthSession.AuthRequest({
-    clientId: CLIENT_ID,
-    scopes: SCOPES,
-    redirectUri,
-    responseType: AuthSession.ResponseType.Code,
-    usePKCE: true,
-    extraParams: { aud: FHIR_BASE_URL },
-  });
+  if (Platform.OS === 'web') return signInViaRedirect(redirectUri);
 
+  const request = buildRequest(redirectUri);
   const result = await request.promptAsync(discovery);
 
   if (result.type === 'cancel' || result.type === 'dismiss') {
@@ -100,23 +201,21 @@ async function signIn() {
     },
     discovery
   );
-
-  cachedToken = {
-    accessToken: tokenResponse.accessToken,
-    expiresAt: Date.now() + (tokenResponse.expiresIn ?? 3300) * 1000,
-  };
-  return cachedToken.accessToken;
+  return storeTokenResponse(tokenResponse);
 }
 
 // Returns a valid access token, signing in first if there isn't one yet
 // (or the cached one has expired).
 async function getAccessToken() {
   if (hasValidToken()) return cachedToken.accessToken;
+  const returned = await completeRedirectIfPresent();
+  if (returned) return returned;
   return signIn();
 }
 
 function signOut() {
   cachedToken = null;
+  persistToken();
 }
 
 export const EpicAuth = { getAccessToken, signIn, signOut, missingConfigKeys };
