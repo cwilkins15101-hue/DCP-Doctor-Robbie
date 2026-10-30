@@ -136,7 +136,13 @@ async function createClinicalNote(patientId, { title, text, encounterId }) {
     body: JSON.stringify(resource),
   });
   if (!response.ok) {
-    throw new Error(`Epic note creation failed (${response.status}): ${await response.text()}`);
+    const detail = (await response.text()).trim();
+    const wwwAuth = response.headers.get('WWW-Authenticate');
+    throw new Error(
+      `Epic note creation failed (${response.status}): ${detail || '(Epic gave no explanation)'}` +
+        (wwwAuth ? `\nWWW-Authenticate: ${wwwAuth}` : '') +
+        `\nTo diagnose, open View Log and look for "Epic sign-in granted scopes".`
+    );
   }
   const location = response.headers.get('Location') ?? '';
   return { id: location.split('/DocumentReference/')[1]?.split('/')[0] ?? null };

@@ -100,6 +100,10 @@ function hasValidToken() {
 }
 
 function storeTokenResponse(tokenResponse) {
+  // Epic only grants the scopes your app is actually allowed to use; logging
+  // what came back (visible in the in-app Debug Log) shows whether write
+  // permission was really granted.
+  console.log('Epic sign-in granted scopes:', tokenResponse.scope ?? '(none reported)');
   cachedToken = {
     accessToken: tokenResponse.accessToken,
     expiresAt: Date.now() + (tokenResponse.expiresIn ?? 3300) * 1000,
