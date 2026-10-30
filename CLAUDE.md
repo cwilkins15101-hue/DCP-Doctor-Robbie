@@ -62,6 +62,12 @@ At the top of that panel, "Compile for Dragon Copilot" (`handleCompileForDragon`
 
 Requires `EXPO_PUBLIC_EPIC_CLIENT_ID` from a free "Non-Production" app registered at fhir.epic.com/Developer — see `.env.example`. That app's Incoming APIs list must include Patient, Condition, DocumentReference (Clinical Notes, both Read and Search), Binary (Clinical Notes), and whatever Incoming API backs `Patient.$summary`/IPS — all R4. Epic's Incoming API permissions are split finely (a Read entry doesn't cover Search, and a document category's DocumentReference entry doesn't cover reading its Binary content — each needs its own explicit entry), and newly-added entries can take a while to actually take effect even after saving. The app's Endpoint URI must also match your current dev tunnel URL exactly. Tokens are cached in memory only (cleared on reload); there's no refresh-token handling, so sign-in runs again once a token expires.
 
+### Send to Epic (write-back)
+
+On the Doctor Robbie note screen, for a patient loaded from Epic, "Send to Epic" (`handleSendNoteToEpic` in `App.js` → `EpicClient.createClinicalNote`) files the note — including physician edits — on that patient's chart as a plain-text `DocumentReference` (base64 `text/plain`, LOINC type from `EXPO_PUBLIC_EPIC_NOTE_LOINC`, default `11506-3`). Needs the `user/DocumentReference.write` scope (in `epicAuth.js`'s default scopes — add it to `EXPO_PUBLIC_EPIC_SCOPES` if overridden) and a "DocumentReference (Clinical Notes) - Create" entry on the Epic app's Incoming APIs list. Epic's error body is shown verbatim on failure; an Encounter reference isn't sent yet (`encounterId` is supported by `createClinicalNote` but unused) — add one if Epic rejects the note for lacking it.
+
+On web, Epic sign-in is a full-page redirect (not a pop-up — Epic severs the pop-up/opener link) and both Microsoft and Epic tokens are kept in `sessionStorage` so the reload doesn't sign the physician out.
+
 ## Git LFS
 
 Git LFS is configured. Large binary assets should be tracked with LFS rather than committed directly.

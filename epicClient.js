@@ -78,6 +78,70 @@ async function fetchPatient(id, accessToken) {
   return response.json();
 }
 
+// Base64 of a UTF-8 string without relying on Buffer/btoa being present on
+// every platform this app runs on (web, iOS, Android).
+function utf8ToBase64(text) {
+  const bytes = [];
+  for (const ch of text) {
+    const cp = ch.codePointAt(0);
+    if (cp < 0x80) bytes.push(cp);
+    else if (cp < 0x800) bytes.push(0xc0 | (cp >> 6), 0x80 | (cp & 0x3f));
+    else if (cp < 0x10000) bytes.push(0xe0 | (cp >> 12), 0x80 | ((cp >> 6) & 0x3f), 0x80 | (cp & 0x3f));
+    else bytes.push(0xf0 | (cp >> 18), 0x80 | ((cp >> 12) & 0x3f), 0x80 | ((cp >> 6) & 0x3f), 0x80 | (cp & 0x3f));
+  }
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+  let out = '';
+  for (let i = 0; i < bytes.length; i += 3) {
+    const [a, b, c] = [bytes[i], bytes[i + 1], bytes[i + 2]];
+    out += chars[a >> 2] + chars[((a & 3) << 4) | ((b ?? 0) >> 4)];
+    out += b === undefined ? '=' : chars[((b & 15) << 2) | ((c ?? 0) >> 6)];
+    out += c === undefined ? '=' : chars[c & 63];
+  }
+  return out;
+}
+
+// LOINC code Epic files the note under. 11506-3 ("Subsequent evaluation
+// note") is one of the two note classes Epic's Clinical Notes API names;
+// override if your Epic app is set up for a different note type.
+const NOTE_LOINC_CODE = process.env.EXPO_PUBLIC_EPIC_NOTE_LOINC || '11506-3';
+const NOTE_LOINC_DISPLAY = process.env.EXPO_PUBLIC_EPIC_NOTE_LOINC_DISPLAY || 'Subsequent evaluation note';
+
+// Files plain text as a clinical note on this patient's chart
+// (DocumentReference.Create). Epic's error body is passed through as-is so
+// a rejection says exactly what Epic wants changed (missing encounter,
+// unsupported note type, missing API permission, ...).
+async function createClinicalNote(patientId, { title, text, encounterId }) {
+  const accessToken = await EpicAuth.getAccessToken();
+  const resource = {
+    resourceType: 'DocumentReference',
+    status: 'current',
+    type: {
+      coding: [{ system: 'http://loinc.org', code: NOTE_LOINC_CODE, display: NOTE_LOINC_DISPLAY }],
+      text: title,
+    },
+    subject: { reference: `Patient/${patientId}` },
+    date: new Date().toISOString(),
+    description: title,
+    content: [{ attachment: { contentType: 'text/plain', data: utf8ToBase64(text) } }],
+  };
+  if (encounterId) resource.context = { encounter: [{ reference: `Encounter/${encounterId}` }] };
+
+  const response = await fetch(`${FHIR_BASE_URL}/DocumentReference`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      Accept: 'application/fhir+json',
+      'Content-Type': 'application/fhir+json',
+    },
+    body: JSON.stringify(resource),
+  });
+  if (!response.ok) {
+    throw new Error(`Epic note creation failed (${response.status}): ${await response.text()}`);
+  }
+  const location = response.headers.get('Location') ?? '';
+  return { id: location.split('/DocumentReference/')[1]?.split('/')[0] ?? null };
+}
+
 // Signs in if needed, then fetches the sandbox's documented test patients.
 async function fetchSandboxPatients() {
   const accessToken = await EpicAuth.getAccessToken();
@@ -223,5 +287,6 @@ export const EpicClient = {
   fetchIPS,
   fetchClinicalNotes,
   fetchClinicalNoteText,
+  createClinicalNote,
   missingConfigKeys: EpicAuth.missingConfigKeys,
 };

@@ -433,6 +433,7 @@ export default function App() {
   // as an explicit style height below so the box grows instead of
   // scrolling internally.
   const [noteInputHeights, setNoteInputHeights] = useState({});
+  const [sendingToEpic, setSendingToEpic] = useState(false);
   // Off by default — Dragon Copilot's note template includes sections the
   // encounter didn't cover (blank content); most of the time those are
   // just noise, but a physician may want to see and fill them in directly
@@ -1119,6 +1120,33 @@ export default function App() {
     }
   }
 
+  // Files the current Doctor Robbie note (with any in-app edits) on the
+  // selected Epic patient's chart as a plain-text clinical note.
+  async function handleSendNoteToEpic(parsedNote) {
+    if (!selectedPatient?.id || !parsedNote) return;
+    const body = parsedNote.sections
+      .map((s) => ({ title: s.title, content: (editedNoteSections[s.id] ?? s.content ?? '').trim() }))
+      .filter((s) => s.content)
+      .map((s) => `${s.title}\n${s.content}`)
+      .join('\n\n');
+    if (!body) {
+      notify('Nothing to send', 'This note has no content yet.');
+      return;
+    }
+    setSendingToEpic(true);
+    try {
+      await EpicClient.createClinicalNote(selectedPatient.id, {
+        title: parsedNote.title,
+        text: `${parsedNote.title}\n\n${body}`,
+      });
+      notify('Sent to Epic', `The note was filed on ${selectedPatient['Patient Name']}'s chart.`);
+    } catch (err) {
+      notify('Send to Epic failed', String(err?.message ?? err));
+    } finally {
+      setSendingToEpic(false);
+    }
+  }
+
   async function handleCopyDragonSummary() {
     if (!dragonSummaryText) return;
     await Clipboard.setStringAsync(dragonSummaryText);
@@ -1655,6 +1683,22 @@ export default function App() {
                   {showAllNoteSections && <Ionicons name="checkmark" size={12} color={C.white} />}
                 </View>
                 <Text style={styles.noteSectionsToggleText}>Display additional note sections</Text>
+              </TouchableOpacity>
+            )}
+            {selectedPatient?.id && (
+              <TouchableOpacity
+                style={[styles.launchDragonButton, sendingToEpic && styles.buttonDisabled]}
+                onPress={() => handleSendNoteToEpic(parsedNote)}
+                disabled={sendingToEpic}
+              >
+                {sendingToEpic ? (
+                  <ActivityIndicator color={C.blue} size="small" />
+                ) : (
+                  <Ionicons name="cloud-upload-outline" size={16} color={C.blue} />
+                )}
+                <Text style={styles.launchDragonButtonText}>
+                  {sendingToEpic ? 'Sending…' : `Send to Epic (${selectedPatient['Patient Name']})`}
+                </Text>
               </TouchableOpacity>
             )}
             {visibleSections.length === 0 ? (

@@ -34,7 +34,9 @@ const SCOPES = (
   process.env.EXPO_PUBLIC_EPIC_SCOPES ||
   'openid fhirUser online_access user/Patient.read user/Patient.search ' +
     'user/Condition.read user/Condition.search ' +
-    'user/DocumentReference.read user/DocumentReference.search user/Binary.read'
+    'user/DocumentReference.read user/DocumentReference.search user/Binary.read ' +
+    // Lets "Send to Epic" file a Doctor Robbie note on the patient's chart.
+    'user/DocumentReference.write'
 )
   .trim()
   .split(/\s+/)
@@ -59,7 +61,8 @@ function missingConfigKeys() {
 // again once expired.
 let cachedToken = null; // { accessToken, expiresAt }
 
-const TOKEN_KEY = 'epicAuth.token';
+// v2: older cached tokens predate the write scope above, so they'd be refused.
+const TOKEN_KEY = 'epicAuth.token.v2';
 const PENDING_KEY = 'epicAuth.pending'; // { state, codeVerifier, redirectUri }
 // Set just before leaving for Epic so the app knows to pick up where it left
 // off (reload the patient list) once it's back.
