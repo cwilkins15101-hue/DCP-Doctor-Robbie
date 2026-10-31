@@ -65,6 +65,18 @@ const PENDING_KEY = 'epicAuth.pending'; // { state, codeVerifier, redirectUri }
 // Set just before leaving for Epic so the app knows to pick up where it left
 // off (reload the patient list) once it's back.
 export const EPIC_RESUME_KEY = 'epicAuth.resume';
+const LAST_REQUEST_KEY = 'epicAuth.lastRequest';
+
+// Shows what the previous sign-in attempt sent to Epic (see
+// signInViaRedirect). Deferred a tick so the app's Debug Log is listening.
+setTimeout(() => {
+  try {
+    const last = storage()?.getItem(LAST_REQUEST_KEY);
+    if (last) console.log('Last Epic authorize request sent:', last);
+  } catch {
+    // Diagnostic only.
+  }
+}, 0);
 
 function storage() {
   try {
@@ -148,6 +160,17 @@ async function signInViaRedirect(redirectUri) {
     JSON.stringify({ state: request.state, codeVerifier: request.codeVerifier, redirectUri })
   );
   storage().setItem(EPIC_RESUME_KEY, '1');
+  // The Debug Log lives in memory and is lost when the page leaves for Epic,
+  // so keep a summary of exactly what was sent and show it after returning.
+  try {
+    const sent = new URL(authUrl).searchParams;
+    storage().setItem(
+      LAST_REQUEST_KEY,
+      `scope="${sent.get('scope')}" redirect_uri="${sent.get('redirect_uri')}" aud="${sent.get('aud')}" client_id="${sent.get('client_id')}"`
+    );
+  } catch {
+    // Diagnostic only.
+  }
   globalThis.location.assign(authUrl);
   // The page is navigating away; never resolve so callers don't act on a
   // missing token in the meantime.
