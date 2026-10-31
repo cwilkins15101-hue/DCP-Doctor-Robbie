@@ -100,6 +100,48 @@ function utf8ToBase64(text) {
   return out;
 }
 
+// Epic won't file a note without a valid Encounter ("Valid encounter
+// required"), so find one for this patient. Prefers the patient's most
+// recent Encounter (needs "Encounter.Search" on the Epic app); if that isn't
+// available, falls back to the encounter an existing note of theirs
+// already belongs to (works with the Clinical Notes entries the app has).
+function encounterIdFromReference(reference) {
+  return typeof reference === 'string' ? reference.split('Encounter/')[1]?.split(/[/?#]/)[0] || null : null;
+}
+
+async function findEncounterId(patientId, accessToken) {
+  const headers = { Authorization: `Bearer ${accessToken}`, Accept: 'application/fhir+json' };
+
+  try {
+    const response = await fetch(`${FHIR_BASE_URL}/Encounter?patient=${encodeURIComponent(patientId)}`, { headers });
+    if (response.ok) {
+      const encounters = ((await response.json()).entry ?? [])
+        .map((entry) => entry.resource)
+        .filter((resource) => resource?.resourceType === 'Encounter' && resource.id);
+      encounters.sort((a, b) => String(b.period?.start ?? '').localeCompare(String(a.period?.start ?? '')));
+      if (encounters[0]) return encounters[0].id;
+    }
+  } catch {
+    // Fall through to the notes-based lookup.
+  }
+
+  const response = await fetch(
+    `${FHIR_BASE_URL}/DocumentReference?patient=${encodeURIComponent(patientId)}&category=clinical-note`,
+    { headers }
+  );
+  if (response.ok) {
+    const notes = ((await response.json()).entry ?? [])
+      .map((entry) => entry.resource)
+      .filter((resource) => resource?.resourceType === 'DocumentReference');
+    notes.sort((a, b) => String(b.date ?? '').localeCompare(String(a.date ?? '')));
+    for (const note of notes) {
+      const id = encounterIdFromReference(note.context?.encounter?.[0]?.reference);
+      if (id) return id;
+    }
+  }
+  return null;
+}
+
 // LOINC code Epic files the note under. 11506-3 ("Subsequent evaluation
 // note") is one of the two note classes Epic's Clinical Notes API names;
 // override if your Epic app is set up for a different note type.
@@ -110,8 +152,15 @@ const NOTE_LOINC_DISPLAY = process.env.EXPO_PUBLIC_EPIC_NOTE_LOINC_DISPLAY || 'S
 // (DocumentReference.Create). Epic's error body is passed through as-is so
 // a rejection says exactly what Epic wants changed (missing encounter,
 // unsupported note type, missing API permission, ...).
-async function createClinicalNote(patientId, { title, text, encounterId }) {
+async function createClinicalNote(patientId, { title, text, encounterId: givenEncounterId }) {
   const accessToken = await EpicAuth.getAccessToken();
+  const encounterId = givenEncounterId ?? (await findEncounterId(patientId, accessToken));
+  if (!encounterId) {
+    throw new Error(
+      "Epic requires a visit (encounter) on every note, and none could be found for this patient. " +
+        'Add "Encounter.Search" (R4) to your Epic app\'s Incoming APIs, or open a visit for this patient in Epic.'
+    );
+  }
   const resource = {
     resourceType: 'DocumentReference',
     status: 'current',
