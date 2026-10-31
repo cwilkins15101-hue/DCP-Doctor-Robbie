@@ -192,7 +192,9 @@ async function signIn() {
     throw new Error(`Epic sign-in isn't configured: missing ${missing.join(', ')}`);
   }
 
-  const redirectUri = AuthSession.makeRedirectUri();
+  // Drop any query string (e.g. ?epicWrite=1): Epic matches the return
+  // address exactly, so it must be the same as the registered one.
+  const redirectUri = AuthSession.makeRedirectUri().split('?')[0];
   // Logged so it shows up in the app's own Debug Log — the first time you
   // sign in from a new platform (web/iOS/Android), add this exact URI to
   // the Epic app registration's redirect URIs.
