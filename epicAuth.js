@@ -122,23 +122,14 @@ function storeTokenResponse(tokenResponse) {
   return cachedToken.accessToken;
 }
 
-// "Send to Epic" needs write permission, but Epic rejects the whole sign-in
-// ("Invalid OAuth 2.0 request") if the app asks for a scope it isn't set up
-// for. So write permission is opt-in: open the site with ?epicWrite=1 (asks
-// for user/DocumentReference.write) or ?epicWrite=<scope> to try another
-// scope name, then click Epic Patient List.
-function requestedScopes() {
-  if (Platform.OS !== 'web') return SCOPES;
-  const param = new URLSearchParams(globalThis.location?.search ?? '').get('epicWrite');
-  if (!param) return SCOPES;
-  const writeScope = param === '1' ? 'user/DocumentReference.write' : param;
-  return [...SCOPES, writeScope];
-}
-
+// Write permission for "Send to Epic" (user/DocumentReference.write) isn't
+// requested here: Epic grants it from the app's registered Incoming APIs
+// ("DocumentReference.Create (Clinical Notes)"), and rejects the whole
+// sign-in if an app asks for a scope it isn't set up for.
 function buildRequest(redirectUri) {
   return new AuthSession.AuthRequest({
     clientId: CLIENT_ID,
-    scopes: requestedScopes(),
+    scopes: SCOPES,
     redirectUri,
     responseType: AuthSession.ResponseType.Code,
     usePKCE: true,
